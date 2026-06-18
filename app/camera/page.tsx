@@ -20,7 +20,6 @@ export default function CameraPage() {
 
   return (
     <div className="flex h-screen bg-background">
-      
       <AppSidebar />
 
       {/* Main content */}

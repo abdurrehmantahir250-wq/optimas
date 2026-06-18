@@ -58,7 +58,7 @@ export function AppSidebar() {
           </div>
          
             </div>
-            <p className="text-xs text-sidebar-foreground/60 ml-13" style="text-align: center;">Remote Device Control</p>
+            <p className="text-xs text-sidebar-foreground/60 text-center">Remote Device Control</p>
           </div>
 
           {/* User Mode */}
