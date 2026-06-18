@@ -364,7 +364,7 @@ export default function Home() {
                   <p className="text-sm text-muted-foreground">{item.description}</p>
                 </div>
                 {idx < 3 && (
-                  <div className="hidden md:block absolute -right-3 top-12 w-6 h-0.5 bg-border" />
+                  <div className="hidden md:block absolute right top-12 w-6 h-0.5 bg-border" />
                 )}
               </div>
             );
