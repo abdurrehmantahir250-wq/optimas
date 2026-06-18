@@ -20,6 +20,14 @@ export default function CameraPage() {
 
   return (
     <div className="flex h-screen bg-background">
+        <CustomSlider
+                    label="Contrast"
+                    min={0}
+                    max={100}
+                    value={50}
+                    showValue={true}
+                    unit="%"
+                  />
       <AppSidebar />
 
       {/* Main content */}
