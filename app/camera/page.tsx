@@ -3,6 +3,7 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CustomSlider } from "@/components/custom-slider";
 import { Camera, Video, Download, RefreshCw, Smartphone, Play, Square } from "lucide-react";
 import { useState } from "react";
 
@@ -161,40 +162,34 @@ export default function CameraPage() {
               <Card className="p-6 border border-border bg-card">
                 <h3 className="font-semibold mb-4">Settings</h3>
 
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-2 block">Brightness</label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      defaultValue="50"
-                      className="w-full h-2 bg-border rounded-lg appearance-none cursor-pointer"
-                    />
-                  </div>
+                <div className="space-y-6">
+                  <CustomSlider
+                    label="Brightness"
+                    min={0}
+                    max={100}
+                    value={50}
+                    showValue={true}
+                    unit="%"
+                  />
 
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-2 block">Contrast</label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      defaultValue="50"
-                      className="w-full h-2 bg-border rounded-lg appearance-none cursor-pointer"
-                    />
-                  </div>
+                  <CustomSlider
+                    label="Contrast"
+                    min={0}
+                    max={100}
+                    value={50}
+                    showValue={true}
+                    unit="%"
+                  />
 
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-2 block">Zoom</label>
-                    <input
-                      type="range"
-                      min="1"
-                      max="10"
-                      defaultValue="1"
-                      step="0.1"
-                      className="w-full h-2 bg-border rounded-lg appearance-none cursor-pointer"
-                    />
-                  </div>
+                  <CustomSlider
+                    label="Zoom"
+                    min={1}
+                    max={10}
+                    step={0.1}
+                    value={1}
+                    showValue={true}
+                    unit="x"
+                  />
 
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Flash</span>

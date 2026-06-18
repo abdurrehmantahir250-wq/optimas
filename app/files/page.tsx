@@ -10,6 +10,11 @@ export default function FilesPage() {
   const [selectedDevice, setSelectedDevice] = useState("device-1");
   const [currentPath, setCurrentPath] = useState("/storage/emulated/0");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedFile, setSelectedFile] = useState<number | null>(null);
+
+  const handleFileAction = (action: string, fileName: string) => {
+    console.log(`[v0] File action: ${action} on ${fileName}`);
+  };
 
   const files = [
     { id: 1, name: "DCIM", type: "folder", size: "12.5 GB", modified: "2 hours ago" },
@@ -113,18 +118,33 @@ export default function FilesPage() {
                   <div className="flex items-center gap-2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
                     {file.type === "file" && (
                       <>
-                        <button className="p-2 hover:bg-accent/10 rounded-lg transition-colors" title="Download">
+                        <button 
+                          onClick={() => handleFileAction("download", file.name)}
+                          className="p-2 hover:bg-accent/10 rounded-lg transition-colors" 
+                          title="Download"
+                        >
                           <Download className="w-4 h-4" />
                         </button>
-                        <button className="p-2 hover:bg-accent/10 rounded-lg transition-colors" title="Rename">
+                        <button 
+                          onClick={() => handleFileAction("rename", file.name)}
+                          className="p-2 hover:bg-accent/10 rounded-lg transition-colors" 
+                          title="Rename"
+                        >
                           <Edit2 className="w-4 h-4" />
                         </button>
                       </>
                     )}
-                    <button className="p-2 hover:bg-red-500/10 rounded-lg transition-colors" title="Delete">
+                    <button 
+                      onClick={() => handleFileAction("delete", file.name)}
+                      className="p-2 hover:bg-red-500/10 rounded-lg transition-colors" 
+                      title="Delete"
+                    >
                       <Trash2 className="w-4 h-4 text-red-600" />
                     </button>
-                    <button className="p-2 hover:bg-accent/10 rounded-lg transition-colors">
+                    <button 
+                      onClick={() => handleFileAction("menu", file.name)}
+                      className="p-2 hover:bg-accent/10 rounded-lg transition-colors"
+                    >
                       <MoreVertical className="w-4 h-4" />
                     </button>
                   </div>
