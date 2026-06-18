@@ -3,7 +3,7 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { QrCode, Plus, Smartphone, Battery, Zap, Wifi, Eye, Trash2, MoreVertical } from "lucide-react";
+import { QrCode, Plus, Smartphone, Battery, Zap, Wifi, Eye, Trash2, MoreVertical, FileText } from "lucide-react";
 import { useState } from "react";
 
 export default function DashboardPage() {
