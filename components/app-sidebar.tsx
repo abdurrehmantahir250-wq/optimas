@@ -46,9 +46,9 @@ export function AppSidebar() {
         <div className="p-8">
           <div className="mb-12">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-sidebar-primary rounded-lg flex items-center justify-center">
+              {/* <div className="w-10 h-10 bg-sidebar-primary rounded-lg flex items-center justify-center">
                 <Smartphone className="w-5 h-5 text-sidebar-primary-foreground" />
-              </div>
+              </div> */}
             
           <div className="flex items-center gap-3">
             <div className="text-foreground hover-lift transition-transform">
