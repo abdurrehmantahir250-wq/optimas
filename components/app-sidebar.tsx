@@ -34,7 +34,9 @@ export function AppSidebar() {
         onClick={() => setIsOpen(!isOpen)}
         className="fixed top-4 left-4 z-50 lg:hidden p-2 hover:bg-secondary rounded-lg transition-colors"
       >
-        {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+       {isOpen ? 
+        (<><div className="left"><X className="w-6 h-6" /></div></>) : 
+        <Menu className="w-6 h-6" />}
       </button>
 
       {/* Sidebar */}

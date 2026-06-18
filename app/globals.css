@@ -292,3 +292,17 @@
 .right{
   right: -25px !important;
 }
+@media (max-width: 1000px) {
+  main{
+    margin-top: 60px;
+  }
+  .left{
+    position: relative;
+    left: 185px;
+
+  }
+  .stickey{
+    position: static;
+    height: 100%;
+  }
+}
