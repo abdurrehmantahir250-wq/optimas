@@ -230,4 +230,29 @@
       opacity: 1;
     }
   }
+
+  /* Custom Scrollbar */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--sidebar-accent) var(--sidebar);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: var(--sidebar);
+    border-radius: 10px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--sidebar-accent);
+    border-radius: 10px;
+    border: 2px solid var(--sidebar);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--sidebar-accent-foreground);
+  }
 }
