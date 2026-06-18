@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { ZenvoraLogo } from "@/components/zenvora-logo";
 import Link from "next/link";
 import { Smartphone, Zap, Lock, Users, Shield, ArrowRight, Check, Globe, Cpu, Wifi, AlertCircle, TrendingUp, Cloud } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -52,10 +53,10 @@ export default function Home() {
       }`}>
         <div className="max-w-7xl mx-auto px-6 lg:px-12 py-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-foreground rounded-lg flex items-center justify-center hover-lift">
-              <Smartphone className="w-5 h-5 text-background" />
+            <div className="text-foreground hover-lift transition-transform">
+              <ZenvoraLogo />
             </div>
-            <span className="font-display text-xl font-semibold">DeviceGuard</span>
+            <span className="font-display text-xl font-semibold">Zenvora</span>
           </div>
           <Link href="/dashboard">
             <Button className="bg-foreground hover:bg-foreground/90 text-background px-6 rounded-full gap-2 group transition-all hover:shadow-lg">
@@ -113,18 +114,61 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Demo area with animation */}
+        {/* Animated hero visualization */}
         <div className={`transition-all duration-700 delay-500 ${
           isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
         }`}>
-          <div className="bg-gradient-to-b from-card to-sidebar rounded-2xl border border-border p-8 lg:p-12 aspect-video flex items-center justify-center text-muted-foreground relative overflow-hidden group">
-            <div className="absolute inset-0 bg-gradient-to-r from-foreground/0 via-foreground/5 to-foreground/0 animate-pulse" />
-            <div className="relative z-10 text-center">
-              <div className="w-20 h-20 mx-auto mb-6 bg-accent rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-                <Smartphone className="w-10 h-10 text-foreground" />
+          <div className="relative h-96 sm:h-[500px] md:h-[600px] rounded-3xl border border-border overflow-hidden bg-gradient-to-br from-card via-sidebar to-background">
+            {/* Animated gradient background */}
+            <div className="absolute inset-0 opacity-30">
+              <div className="absolute top-0 left-1/4 w-72 h-72 bg-foreground/20 rounded-full mix-blend-multiply filter blur-3xl animate-blob" />
+              <div className="absolute top-0 right-1/4 w-72 h-72 bg-accent/20 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-2000" />
+              <div className="absolute -bottom-8 left-1/2 w-72 h-72 bg-foreground/10 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-4000" />
+            </div>
+
+            {/* Animated grid lines */}
+            <svg className="absolute inset-0 w-full h-full opacity-10" preserveAspectRatio="none">
+              <defs>
+                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor" strokeWidth="0.5" />
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#grid)" />
+            </svg>
+
+            {/* Central animated elements */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="relative w-64 h-64 sm:w-80 sm:h-80">
+                {/* Rotating rings */}
+                <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-foreground border-r-accent/50 animate-spin" style={{ animationDuration: '8s' }} />
+                <div className="absolute inset-8 rounded-full border-2 border-transparent border-b-foreground border-l-accent/50 animate-spin" style={{ animationDuration: '6s', animationDirection: 'reverse' }} />
+                <div className="absolute inset-16 rounded-full border border-accent/30 animate-pulse" />
+
+                {/* Central WiFi logo */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="scale-150 text-foreground opacity-80">
+                    <ZenvoraLogo />
+                  </div>
+                </div>
+
+                {/* Orbiting dots */}
+                <div className="absolute inset-0 animate-spin" style={{ animationDuration: '20s' }}>
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 bg-accent rounded-full" />
+                </div>
+                <div className="absolute inset-0 animate-spin" style={{ animationDuration: '20s', animationDirection: 'reverse' }}>
+                  <div className="absolute bottom-0 right-0 w-3 h-3 bg-accent/60 rounded-full" />
+                </div>
               </div>
-              <p className="text-lg font-semibold mb-2">Live Device Management</p>
-              <p className="text-sm">Real-time monitoring and control capabilities</p>
+            </div>
+
+            {/* Responsive info overlay */}
+            <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 bg-gradient-to-t from-background via-background/80 to-transparent">
+              <p className="text-sm sm:text-base font-semibold text-foreground text-center mb-2">
+                Enterprise Device Management
+              </p>
+              <p className="text-xs sm:text-sm text-muted-foreground text-center">
+                Real-time monitoring, security controls & seamless device management
+              </p>
             </div>
           </div>
         </div>
@@ -432,8 +476,8 @@ export default function Home() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
             <div>
               <div className="flex items-center gap-2 mb-4">
-                <Smartphone className="w-5 h-5" />
-                <span className="font-display font-semibold">DeviceGuard</span>
+                <ZenvoraLogo />
+                <span className="font-display font-semibold">Zenvora</span>
               </div>
               <p className="text-sm text-muted-foreground">Enterprise Mobile Device Management Platform</p>
             </div>
