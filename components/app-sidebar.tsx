@@ -11,7 +11,7 @@ export function AppSidebar() {
 
   const userMenuItems = [
     { icon: Home, label: "Dashboard", href: "/dashboard" },
-    { icon: Smartphone, label: "Devices", href: "/devices" },
+    { icon: Smartphone, label: "Devices", href: "admin/devices" },
     { icon: Eye, label: "Screen Monitor", href: "/screen" },
     { icon: Camera, label: "Camera Access", href: "/camera" },
     { icon: FileText, label: "File Manager", href: "/files" },
@@ -21,7 +21,7 @@ export function AppSidebar() {
 
   const adminMenuItems = [
     { icon: Shield, label: "Admin Dashboard", href: "/admin" },
-    { icon: Smartphone, label: "Device Management", href: "/admin/devices" },
+    { icon: Smartphone, label: "Devices", href: "/admin/devices" },
     { icon: FileText, label: "Users", href: "/admin/users" },
     { icon: History, label: "System Logs", href: "/admin/logs" },
     { icon: Eye, label: "Security", href: "/admin/security" },
@@ -58,7 +58,7 @@ export function AppSidebar() {
           </div>
          
             </div>
-            <p className="text-xs text-sidebar-foreground/60 ml-13">Remote Device Control</p>
+            <p className="text-xs text-sidebar-foreground/60 ml-13" style="text-align: center;">Remote Device Control</p>
           </div>
 
           {/* User Mode */}
