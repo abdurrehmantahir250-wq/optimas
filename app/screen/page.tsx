@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { CustomSlider } from "@/components/custom-slider";
 import { Download, Smartphone, Maximize2, RotateCw, Settings, Volume2, Lock } from "lucide-react";
 import { useState } from "react";
-
+import Select from "react-select";
 export default function ScreenPage() {
   const [selectedDevice, setSelectedDevice] = useState("device-1");
   const [isStreaming, setIsStreaming] = useState(true);
@@ -28,15 +28,25 @@ export default function ScreenPage() {
 
           {/* Device selector */}
           <div className="mb-8 flex gap-4">
-            <select
-              value={selectedDevice}
-              onChange={(e) => setSelectedDevice(e.target.value)}
-              className="flex-1 px-4 py-3 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-foreground/20"
-            >
-              <option value="device-1">Samsung Galaxy S24</option>
-              <option value="device-2">iPhone 15 Pro</option>
-              <option value="device-3">Pixel 8</option>
-            </select>
+           <Select
+  value={{
+    value: selectedDevice,
+    label:
+      selectedDevice === "device-1"
+        ? "Samsung Galaxy S24"
+        : selectedDevice === "device-2"
+        ? "iPhone 15 Pro"
+        : "Pixel 8",
+  }}
+  onChange={(option: any) => setSelectedDevice(option.value)}
+  options={[
+    { value: "device-1", label: "Samsung Galaxy S24" },
+    { value: "device-2", label: "iPhone 15 Pro" },
+    { value: "device-3", label: "Pixel 8" },
+  ]}
+  className="flex-1"
+  classNamePrefix="react-select"
+/>
             <Button
               onClick={() => setIsStreaming(!isStreaming)}
               className="bg-foreground hover:bg-foreground/90 text-background px-6 rounded-lg"
