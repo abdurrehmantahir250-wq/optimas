@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { CustomSlider } from "@/components/custom-slider";
 import { Camera, Video, Download, RefreshCw, Smartphone, Play, Square } from "lucide-react";
 import { useState } from "react";
-
+import Select from "react-select";
 export default function CameraPage() {
   const [selectedDevice, setSelectedDevice] = useState("device-1");
   const [activeCamera, setActiveCamera] = useState("front");
@@ -33,15 +33,25 @@ export default function CameraPage() {
 
           {/* Device selector */}
           <div className="mb-8 flex gap-4">
-            <select
-              value={selectedDevice}
-              onChange={(e) => setSelectedDevice(e.target.value)}
-              className="flex-1 px-4 py-3 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-foreground/20"
-            >
-              <option value="device-1">Samsung Galaxy S24</option>
-              <option value="device-2">iPhone 15 Pro</option>
-              <option value="device-3">Pixel 8</option>
-            </select>
+          <Select
+  value={{
+    value: selectedDevice,
+    label:
+      selectedDevice === "device-1"
+        ? "Samsung Galaxy S24"
+        : selectedDevice === "device-2"
+        ? "iPhone 15 Pro"
+        : "Pixel 8",
+  }}
+  onChange={(option: any) => setSelectedDevice(option.value)}
+  options={[
+    { value: "device-1", label: "Samsung Galaxy S24" },
+    { value: "device-2", label: "iPhone 15 Pro" },
+    { value: "device-3", label: "Pixel 8" },
+  ]}
+  className="flex-1"
+  classNamePrefix="react-select"
+/>
           </div>
 
           {/* Camera selection */}
@@ -70,7 +80,7 @@ export default function CameraPage() {
 
           {/* Main camera stream */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-2 stickey">
               <Card className="border border-border bg-black overflow-hidden aspect-video flex items-center justify-center relative">
                 <div className="w-full h-full bg-gradient-to-br from-gray-900 to-black flex flex-col items-center justify-center p-6">
                   <Camera className="w-16 h-16 mb-4 text-white/30" />

@@ -284,3 +284,8 @@
 .text-center{
   text-align: center !important;
 }
+.stickey{
+      position: sticky;
+    top: 30px;
+    height: 50vh;
+}
