@@ -11,7 +11,7 @@ export function AppSidebar() {
 
   const userMenuItems = [
     { icon: Home, label: "Dashboard", href: "/dashboard" },
-    { icon: Smartphone, label: "Devices", href: "admin/devices" },
+    { icon: Smartphone, label: "Devices", href: "/devices" },
     { icon: Eye, label: "Screen Monitor", href: "/screen" },
     { icon: Camera, label: "Camera Access", href: "/camera" },
     { icon: FileText, label: "File Manager", href: "/files" },
