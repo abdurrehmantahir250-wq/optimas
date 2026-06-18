@@ -21,9 +21,20 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Optimus - Platform to Create',
-  description: 'The creative platform for teams who ship. Build, deploy, and scale with unprecedented velocity.',
+  title: 'Zenvora - Enterprise Mobile Device Management Platform',
+  description: 'Secure, scalable MDM solution for enterprises. Remotely manage Android devices with real-time monitoring, security controls, and complete device management capabilities.',
+  keywords: 'MDM, mobile device management, Android management, enterprise security, device control',
   generator: 'v0.app',
+  openGraph: {
+    title: 'Zenvora - Enterprise MDM Platform',
+    description: 'Professional mobile device management for enterprise teams',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Zenvora MDM',
+    description: 'Enterprise Mobile Device Management Platform',
+  },
 }
 
 export default function RootLayout({
