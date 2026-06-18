@@ -3,6 +3,7 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CustomSlider } from "@/components/custom-slider";
 import { Download, Smartphone, Maximize2, RotateCw, Settings, Volume2, Lock } from "lucide-react";
 import { useState } from "react";
 
@@ -98,37 +99,28 @@ export default function ScreenPage() {
               <Card className="p-6 border border-border bg-card">
                 <h3 className="font-semibold mb-4">Device Controls</h3>
 
-                <div className="space-y-4">
+                <div className="space-y-6">
                   {/* Brightness */}
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-2 block">Brightness</label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={brightness}
-                      onChange={(e) => setBrightness(Number(e.target.value))}
-                      className="w-full h-2 bg-border rounded-lg appearance-none cursor-pointer"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">{brightness}%</p>
-                  </div>
+                  <CustomSlider
+                    label="Brightness"
+                    min={0}
+                    max={100}
+                    value={brightness}
+                    onChange={setBrightness}
+                    showValue={true}
+                    unit="%"
+                  />
 
                   {/* Volume */}
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-2 block">Volume</label>
-                    <div className="flex items-center gap-2">
-                      <Volume2 className="w-4 h-4 text-muted-foreground" />
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={volume}
-                        onChange={(e) => setVolume(Number(e.target.value))}
-                        className="flex-1 h-2 bg-border rounded-lg appearance-none cursor-pointer"
-                      />
-                      <span className="text-xs text-muted-foreground w-8">{volume}%</span>
-                    </div>
-                  </div>
+                  <CustomSlider
+                    label="Volume"
+                    min={0}
+                    max={100}
+                    value={volume}
+                    onChange={setVolume}
+                    showValue={true}
+                    unit="%"
+                  />
 
                   <div className="border-t border-border pt-4">
                     <p className="text-xs font-mono text-muted-foreground uppercase tracking-wide mb-3">Actions</p>
