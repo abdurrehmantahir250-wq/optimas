@@ -1,0 +1,153 @@
+/**
+ * Dedicated Screen Operations Engine (screenHandler.js)
+ */
+const FRAME_SCREEN_STREAM = 0x04;
+const FRAME_SCREEN_SNAPSHOT = 0x05;
+
+function parseDisplayIndex(payload = {}) {
+    if (typeof payload.display_index === 'number' && Number.isFinite(payload.display_index)) {
+        return payload.display_index;
+    }
+
+    const raw = payload.display ?? payload.targetDisplay ?? payload.target_display;
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+        return raw;
+    }
+
+    if (typeof raw === 'string') {
+        if (raw.startsWith('display-')) {
+            const parsed = Number(raw.replace('display-', ''));
+            if (!Number.isNaN(parsed)) return parsed;
+        }
+
+        const numeric = Number(raw);
+        if (!Number.isNaN(numeric)) return numeric;
+    }
+
+    return 0;
+}
+
+function handleScreenCommand(ws, packet, activeConnections) {
+    const { action, targetDeviceId, payload } = packet;
+
+    console.log(`[SCREEN ENGINE] Processing [${action}] for Target Node: ${targetDeviceId}`);
+
+    if (!targetDeviceId) {
+        ws.send(JSON.stringify({
+            type: 'sys_error',
+            message: 'Select a live agent node before sending screen controls.'
+        }));
+        return;
+    }
+
+    const targetKey = activeConnections.has(`AGENT_${targetDeviceId}`)
+        ? `AGENT_${targetDeviceId}`
+        : `DEVICE_${targetDeviceId}`;
+
+    const targetAgentSocket = activeConnections.get(targetKey);
+
+    if (targetAgentSocket && targetAgentSocket.readyState === 1) {
+        const outboundPacket = {
+            action,
+            payload: {}
+        };
+
+        if (action === 'SWITCH_DISPLAY') {
+            outboundPacket.payload = {
+                display_index: parseDisplayIndex(payload),
+                display: payload?.display
+            };
+        } else if (
+            action === 'LIST_DISPLAYS'
+            || action === 'PROBE_DISPLAYS'
+            || action === 'START_SCREEN_STREAM'
+            || action === 'STOP_SCREEN_STREAM'
+            || action === 'LOCK_SCREEN'
+            || action === 'OPEN_SETTINGS'
+        ) {
+            outboundPacket.payload = {};
+        } else if (action === 'SET_DISPLAY_BRIGHTNESS' || action === 'SET_SYSTEM_VOLUME') {
+            outboundPacket.payload = {
+                degree_value: Number(payload?.value ?? payload?.degree_value ?? 50)
+            };
+        } else if (action === 'SEND_TEXT_INPUT') {
+            outboundPacket.payload = {
+                text: String(payload?.text ?? '')
+            };
+        } else if (action === 'CAPTURE_SCREENSHOT' || action === 'FETCH_SCREEN_TELEMETRY') {
+            outboundPacket.payload = {
+                display_index: parseDisplayIndex(payload),
+                display: payload?.display,
+                include_frame: action === 'FETCH_SCREEN_TELEMETRY'
+                    ? !!payload?.include_frame
+                    : true
+            };
+        }
+
+        targetAgentSocket.send(JSON.stringify(outboundPacket));
+        console.log(`[SCREEN ENGINE] Forwarded [${action}] to ${targetKey}`);
+
+        ws.send(JSON.stringify({
+            type: 'sys_ack',
+            status: `Screen operation [${action}] piped downstream safely.`
+        }));
+    } else {
+        const liveAgents = Array.from(activeConnections.keys()).filter((k) => k.startsWith('AGENT_'));
+        console.warn(
+            `[SCREEN ENGINE] Target offline: ${targetDeviceId} | live agents: ${liveAgents.join(', ') || 'none'}`
+        );
+        ws.send(JSON.stringify({
+            type: 'sys_error',
+            message: `Native Screen Node [${targetDeviceId}] is offline or unreachable.`
+        }));
+    }
+}
+
+function handleScreenTelemetry(ws, packet, activeConnections) {
+    const metrics = { ...(packet.hardware_metrics || {}) };
+    delete metrics.live_frame;
+
+    const payload = {
+        type: 'screen_telemetry_stream',
+        senderAgentId: ws.connectionKey ? ws.connectionKey.replace(/^AGENT_/, '').replace(/^DEVICE_/, '') : 'UNKNOWN',
+        metrics,
+        message: packet.message || null,
+        action: packet.last_action,
+        status: packet.status || 'RUNNING',
+        has_binary_frame: !!packet.has_binary_frame,
+        frame_bytes: packet.frame_bytes || 0,
+        live_frame_b64: metrics.live_frame_b64 || null
+    };
+
+    activeConnections.forEach((clientSocket, key) => {
+        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
+            clientSocket.send(JSON.stringify(payload));
+        }
+    });
+}
+
+function broadcastScreenBinaryFrame(frameBuffer, activeConnections) {
+    let sent = 0;
+    activeConnections.forEach((clientSocket, key) => {
+        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
+            clientSocket.send(frameBuffer, { binary: true });
+            sent += 1;
+        }
+    });
+    if (sent === 0 && frameBuffer.length > 10) {
+        console.warn('[SCREEN] Binary frame received but no dashboard client connected.');
+    }
+}
+
+function isScreenBinaryFrame(frameType) {
+    return frameType === FRAME_SCREEN_STREAM || frameType === FRAME_SCREEN_SNAPSHOT;
+}
+
+module.exports = {
+    handleScreenCommand,
+    handleScreenTelemetry,
+    broadcastScreenBinaryFrame,
+    isScreenBinaryFrame,
+    FRAME_SCREEN_STREAM,
+    FRAME_SCREEN_SNAPSHOT
+};

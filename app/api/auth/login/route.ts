@@ -1,0 +1,35 @@
+import { NextRequest, NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+
+const {
+  loginUser,
+  signUserToken,
+  AUTH_COOKIE,
+  authCookieOptions
+} = require("../../../../server/services/authService");
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const user = await loginUser(body);
+    const token = signUserToken(user);
+    const response = NextResponse.json({
+      success: true,
+      user: {
+        id: String(user._id),
+        email: user.email,
+        name: user.name,
+        role: user.role
+      }
+    });
+    response.cookies.set(AUTH_COOKIE, token, authCookieOptions());
+    return response;
+  } catch (error: unknown) {
+    const err = error as { message?: string; status?: number };
+    return NextResponse.json(
+      { success: false, message: err.message || "Login failed." },
+      { status: err.status || 500 }
+    );
+  }
+}

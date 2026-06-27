@@ -85,9 +85,11 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+
   html {
     scroll-behavior: smooth;
   }
@@ -97,69 +99,82 @@
   .font-display {
     font-family: var(--font-display);
   }
-  
+
   .text-stroke {
     -webkit-text-stroke: 1.5px currentColor;
     -webkit-text-fill-color: transparent;
   }
-  
+
   .marquee {
     animation: marquee 30s linear infinite;
   }
-  
+
   .marquee-reverse {
     animation: marquee-reverse 25s linear infinite;
   }
 
   @keyframes marquee {
-    0% { transform: translateX(0); }
-    100% { transform: translateX(-50%); }
+    0% {
+      transform: translateX(0);
+    }
+
+    100% {
+      transform: translateX(-50%);
+    }
   }
-  
+
   @keyframes marquee-reverse {
-    0% { transform: translateX(-50%); }
-    100% { transform: translateX(0); }
+    0% {
+      transform: translateX(-50%);
+    }
+
+    100% {
+      transform: translateX(0);
+    }
   }
-  
+
   .line-reveal {
     clip-path: inset(0 100% 0 0);
     animation: line-reveal 0.8s cubic-bezier(0.77, 0, 0.175, 1) forwards;
   }
-  
+
   @keyframes line-reveal {
-    to { clip-path: inset(0 0 0 0); }
+    to {
+      clip-path: inset(0 0 0 0);
+    }
   }
-  
+
   .hover-lift {
     transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  
+
   .hover-lift:hover {
     transform: translateY(-4px);
   }
-  
+
   .letter-spin {
     display: inline-block;
     transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
-  
+
   .letter-spin:hover {
     transform: rotateY(360deg);
   }
-  
+
   .animate-char-in {
     animation: char-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
     opacity: 0;
     filter: blur(40px);
     transform: translateY(100%);
   }
-  
+
   @keyframes char-in {
     0% {
       opacity: 0;
       filter: blur(40px);
       transform: translateY(100%);
     }
+
     100% {
       opacity: 1;
       filter: blur(0);
@@ -170,7 +185,7 @@
   .noise-overlay {
     position: relative;
   }
-  
+
   .noise-overlay::after {
     content: '';
     position: absolute;
@@ -180,10 +195,10 @@
     pointer-events: none;
     z-index: 1;
   }
-  
+
   .border-sketch {
     border: 1px solid transparent;
-    background: 
+    background:
       linear-gradient(var(--background), var(--background)) padding-box,
       linear-gradient(135deg, var(--foreground) 25%, transparent 25%, transparent 50%, var(--foreground) 50%, var(--foreground) 75%, transparent 75%) border-box;
     background-size: 100% 100%, 8px 8px;
@@ -194,6 +209,7 @@
       opacity: 0;
       transform: translateY(20px);
     }
+
     to {
       opacity: 1;
       transform: translateY(0);
@@ -205,6 +221,7 @@
       opacity: 0;
       transform: translateX(-20px);
     }
+
     to {
       opacity: 1;
       transform: translateX(0);
@@ -216,6 +233,7 @@
       opacity: 0;
       transform: translateX(20px);
     }
+
     to {
       opacity: 1;
       transform: translateX(0);
@@ -223,9 +241,12 @@
   }
 
   @keyframes pulse-glow {
-    0%, 100% {
+
+    0%,
+    100% {
       opacity: 0.5;
     }
+
     50% {
       opacity: 1;
     }
@@ -258,12 +279,16 @@
 
   /* Blob animations */
   @keyframes blob {
-    0%, 100% {
+
+    0%,
+    100% {
       transform: translate(0, 0) scale(1);
     }
+
     33% {
       transform: translate(30px, -50px) scale(1.1);
     }
+
     66% {
       transform: translate(-20px, 20px) scale(0.9);
     }
@@ -281,28 +306,62 @@
     animation-delay: 4s;
   }
 }
-.text-center{
+
+.text-center {
   text-align: center !important;
 }
-.stickey{
-      position: sticky;
-    top: 30px;
-    height: 50vh;
+
+.stickey {
+  position: sticky;
+  top: 30px;
+  height: 50vh;
 }
-.right{
+
+.right {
   right: -25px !important;
 }
+
 @media (max-width: 1000px) {
-  main{
+  main {
     margin-top: 60px;
   }
-  .left{
+
+  .left {
     position: relative;
     left: 185px;
 
   }
-  .stickey{
+
+  .stickey {
     position: static;
     height: 100%;
   }
+}
+
+#radix-_r_15_ {
+  max-width: 620px !important;
+}
+
+.aoa {
+  padding: 20px !important;
+}
+
+.sticky {
+  position: sticky;
+  top: 0;
+}
+
+.scrool {
+  overflow: auto;
+
+  /* Firefox */
+  scrollbar-width: none;
+
+  /* IE & Edge (legacy) */
+  -ms-overflow-style: none;
+}
+
+/* Chrome, Edge, Safari */
+.scrool::-webkit-scrollbar {
+  display: none;
 }
