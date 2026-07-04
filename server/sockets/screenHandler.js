@@ -29,6 +29,7 @@ function parseDisplayIndex(payload = {}) {
 
 function handleScreenCommand(ws, packet, activeConnections) {
     const { action, targetDeviceId, payload } = packet;
+    console.log('[screenHandler] Received screen command:', packet);
 
     console.log(`[SCREEN ENGINE] Processing [${action}] for Target Node: ${targetDeviceId}`);
 
@@ -104,6 +105,7 @@ function handleScreenCommand(ws, packet, activeConnections) {
 }
 
 function handleScreenTelemetry(ws, packet, activeConnections) {
+    
     const metrics = { ...(packet.hardware_metrics || {}) };
     delete metrics.live_frame;
 

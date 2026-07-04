@@ -1,4 +1,5 @@
 const express = require('express');
+const User = require('../models/User');
 const {
     registerUser,
     loginUser,
@@ -6,17 +7,37 @@ const {
     verifyUserToken,
     createAgentCredential,
     listUserDevices,
+    setUserAuthSession,
+    clearUserAuthSession,
     AUTH_COOKIE,
-    authCookieOptions
+    authCookieOptions,
+    pairAgent
 } = require('../services/authService');
 const { attachUser } = require('../middleware/auth');
 
 const router = express.Router();
 
+router.post('/agent/pair', async (req, res) => {
+    try {
+        const result = await pairAgent(req.body || {});
+        return res.status(200).json({
+            success: true,
+            agentToken: result.agentToken,
+            gatewayUrl: result.gatewayUrl
+        });
+    } catch (error) {
+        return res.status(error.status || 500).json({
+            success: false,
+            message: error.message || 'Pairing process failed.'
+        });
+    }
+});
+
 router.post('/register', async (req, res) => {
     try {
         const user = await registerUser(req.body || {});
         const token = signUserToken(user);
+        await setUserAuthSession(user, token);
         res.cookie(AUTH_COOKIE, token, authCookieOptions());
         return res.status(200).json({
             success: true,
@@ -24,7 +45,9 @@ router.post('/register', async (req, res) => {
                 id: String(user._id),
                 email: user.email,
                 name: user.name,
-                role: user.role
+                role: user.role,
+                pairingToken: user.pairingToken,
+                pairingUserId: user.pairingUserId
             }
         });
     } catch (error) {
@@ -39,6 +62,7 @@ router.post('/login', async (req, res) => {
     try {
         const user = await loginUser(req.body || {});
         const token = signUserToken(user);
+        await setUserAuthSession(user, token);
         res.cookie(AUTH_COOKIE, token, authCookieOptions());
         return res.status(200).json({
             success: true,
@@ -46,7 +70,9 @@ router.post('/login', async (req, res) => {
                 id: String(user._id),
                 email: user.email,
                 name: user.name,
-                role: user.role
+                role: user.role,
+                pairingToken: user.pairingToken,
+                pairingUserId: user.pairingUserId
             }
         });
     } catch (error) {
@@ -57,7 +83,12 @@ router.post('/login', async (req, res) => {
     }
 });
 
-router.post('/logout', (_req, res) => {
+router.post('/logout', attachUser, async (req, res) => {
+    const token = req.authToken || req.cookies?.[AUTH_COOKIE];
+    const payload = await verifyUserToken(token);
+    if (payload?.sub) {
+        await clearUserAuthSession(payload.sub);
+    }
     res.clearCookie(AUTH_COOKIE, { path: '/' });
     return res.status(200).json({ success: true });
 });
@@ -111,12 +142,13 @@ router.post('/agents', attachUser, async (req, res) => {
     }
 });
 
-router.get('/session', (req, res) => {
-    const token = req.cookies?.[AUTH_COOKIE];
-    const payload = verifyUserToken(token);
+router.get('/session', attachUser, async (req, res) => {
+    const payload = await verifyUserToken(req.authToken || req.cookies?.[AUTH_COOKIE]);
     if (!payload?.sub) {
         return res.status(401).json({ success: false, authenticated: false });
     }
+
+    const user = await User.findById(payload.sub).lean();
     return res.status(200).json({
         success: true,
         authenticated: true,
@@ -124,7 +156,10 @@ router.get('/session', (req, res) => {
             id: payload.sub,
             email: payload.email,
             name: payload.name,
-            role: payload.role
+            role: payload.role,
+            avatarUrl: user?.avatarUrl || payload?.avatarUrl || null,
+            pairingToken: user?.pairingToken || null,
+            pairingUserId: user?.pairingUserId || null
         }
     });
 });

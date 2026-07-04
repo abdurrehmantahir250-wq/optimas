@@ -16,13 +16,15 @@ const {
     serviceErrorResponse
 } = require('../services/virtualFileService');
 
+const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
+
 const router = express.Router();
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-router.get('/trash', async (req, res) => {
+router.get('/trash', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await listTrashItems(req);
         return res.status(200).json(payload);
@@ -32,7 +34,7 @@ router.get('/trash', async (req, res) => {
     }
 });
 
-router.get('/browse', async (req, res) => {
+router.get('/browse', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await browseVirtualFolder(req);
         return res.status(200).json(payload);
@@ -43,7 +45,7 @@ router.get('/browse', async (req, res) => {
     }
 });
 
-router.get('/folders', async (req, res) => {
+router.get('/folders', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await listVirtualFolders(req);
         return res.status(200).json(payload);
@@ -56,7 +58,7 @@ router.get('/folders', async (req, res) => {
     }
 });
 
-router.get('/list', async (req, res) => {
+router.get('/list', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await browseVirtualFolder(req);
         return res.status(200).json(payload);
@@ -66,9 +68,9 @@ router.get('/list', async (req, res) => {
     }
 });
 
-router.post('/folders', async (req, res) => {
+router.post('/folders', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
-        const payload = await createVirtualFolder(req.body || {});
+        const payload = await createVirtualFolder(req);
         return res.status(200).json(payload);
     } catch (error) {
         const err = serviceErrorResponse(error, 'Could not create folder.');
@@ -76,7 +78,7 @@ router.post('/folders', async (req, res) => {
     }
 });
 
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', attachUser, requireUserIdOwnership, requireDeviceAccess, upload.single('file'), async (req, res) => {
     try {
         const payload = await uploadVirtualFile(req, req.file);
         return res.status(200).json(payload);
@@ -87,7 +89,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-router.patch('/:id/rename', async (req, res) => {
+router.patch('/:id/rename', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await renameVirtualFile(req, req.params.id, req.body || {});
         return res.status(200).json(payload);
@@ -97,7 +99,7 @@ router.patch('/:id/rename', async (req, res) => {
     }
 });
 
-router.patch('/:id/move', async (req, res) => {
+router.patch('/:id/move', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await moveVirtualFile(req, req.params.id, req.body || {});
         return res.status(200).json(payload);
@@ -107,7 +109,7 @@ router.patch('/:id/move', async (req, res) => {
     }
 });
 
-router.post('/:id/share', async (req, res) => {
+router.post('/:id/share', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await shareVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
@@ -118,9 +120,9 @@ router.post('/:id/share', async (req, res) => {
     }
 });
 
-router.delete('/folders/:id', async (req, res) => {
+router.delete('/folders/:id', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const payload = await deleteVirtualFolder(req.params.id);
+        const payload = await deleteVirtualFolder(req, req.params.id);
         return res.status(200).json(payload);
     } catch (error) {
         const err = serviceErrorResponse(error, 'Delete folder failed.');
@@ -128,7 +130,7 @@ router.delete('/folders/:id', async (req, res) => {
     }
 });
 
-router.post('/:id/restore', async (req, res) => {
+router.post('/:id/restore', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const payload = await restoreVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
@@ -138,9 +140,9 @@ router.post('/:id/restore', async (req, res) => {
     }
 });
 
-router.delete('/:id/permanent', async (req, res) => {
+router.delete('/:id/permanent', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const payload = await purgeVirtualFile(req.params.id);
+        const payload = await purgeVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
     } catch (error) {
         const err = serviceErrorResponse(error, 'Permanent delete failed.');
@@ -148,9 +150,9 @@ router.delete('/:id/permanent', async (req, res) => {
     }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const payload = await deleteVirtualFile(req.params.id);
+        const payload = await deleteVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
     } catch (error) {
         const err = serviceErrorResponse(error, 'Delete failed.');

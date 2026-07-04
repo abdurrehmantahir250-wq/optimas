@@ -42,12 +42,8 @@ export default function LoginForm() {
   };
 
   const handleGoogleLogin = () => {
-    toast.info("Connecting to Google OAuth...");
-    // Redirect to next-auth or custom google auth endpoint if backend supports it, 
-    // or simulate auth success redirect
-    setTimeout(() => {
-      router.replace(nextPath);
-    }, 1000);
+    toast.info("Redirecting to Google sign-in...");
+    window.location.href = "/api/auth/google";
   };
 
   return (

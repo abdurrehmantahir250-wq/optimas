@@ -1,10 +1,11 @@
 const express = require('express');
 const { getConnectionRegistry } = require('../sockets/registry');
 const { execFileCommand, FILE_ACTION_TOKENS } = require('../sockets/fileHandler');
+const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.post('/exec', async (req, res) => {
+router.post('/exec', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const action = String(req.body?.action || '');
         const targetDeviceId = String(req.body?.targetDeviceId || '');

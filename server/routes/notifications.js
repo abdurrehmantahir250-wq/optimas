@@ -4,8 +4,9 @@ const Notification = require('../models/Notification');
 const User = require('../models/User');
 
 const notification = require("../services/notificationService");
+const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
 // Get notifications for current device
-router.get('/', async (req, res) => {
+router.get('/', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, category, limit = 50 } = req.query;
         
@@ -13,7 +14,7 @@ router.get('/', async (req, res) => {
             return res.status(400).json({ success: false, message: 'deviceId required' });
         }
 
-        const query = { deviceId };
+        const query = { userId: req.user.id, deviceId };
         if (category && category !== 'all') {
             query.category = category;
         }
@@ -33,7 +34,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-router.put('/mark-all-read', async (req, res) => {
+router.put('/mark-all-read', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId } = req.body;
 
@@ -52,11 +53,12 @@ router.put('/mark-all-read', async (req, res) => {
 });
 
 // Get notification cou nt by category
-router.get('/categories', async (req, res) => {
+router.get('/categories', attachUser, requireUserIdOwnership, async (req, res) => {
 
     console.log("CATEGORIES ROUTE HIT");
 
     const categories = await Notification.aggregate([
+        { $match: { userId: req.user.id } },
         {
             $group: {
                 _id: '$app',
@@ -73,19 +75,20 @@ router.get('/categories', async (req, res) => {
     });
 });
 // Create notification (from Rust agent)
-router.post('/', async (req, res) => {
+router.post('/', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
-        const { userId, app, title, message, icon, category } = req.body;
+        const { deviceId, app, title, message, icon, category } = req.body;
 
-        if (!app || !title) {
+        if (!deviceId || !app || !title) {
             return res.status(400).json({ 
                 success: false, 
                 message: 'app and title are required' 
             });
         }
 
-        const notification = new Notification({
-            userId,
+        const notificationDoc = new Notification({
+            userId: req.user.id,
+            deviceId,
             app,
             title,
             message,
@@ -94,25 +97,7 @@ router.post('/', async (req, res) => {
             read: false
         });
 
-      await Notification.updateOne(
-    {
-        deviceId,
-        app,
-        title,
-        message,
-    },
-    {
-        $setOnInsert: {
-            userId,
-            icon,
-            category: category || "toast",
-            read: false,
-        },
-    },
-    {
-        upsert: true,
-    }
-);
+        const notification = await notificationDoc.save();
 
         res.status(201).json({
             success: true,
@@ -124,7 +109,7 @@ router.post('/', async (req, res) => {
 });
 
 // Bulk create notifications
-router.post('/bulk', async (req, res) => {
+router.post('/bulk', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { notifications } = req.body;
 
@@ -135,7 +120,13 @@ router.post('/bulk', async (req, res) => {
             });
         }
 
-        const created = await Notification.insertMany(notifications);
+        const created = await Notification.insertMany(
+            notifications.map((item) => ({
+                ...item,
+                userId: req.user.id,
+                deviceId: item.deviceId || req.body.deviceId
+            }))
+        );
 
         res.status(201).json({
             success: true,
@@ -148,10 +139,10 @@ router.post('/bulk', async (req, res) => {
 });
 
 // Mark notification as read
-router.put('/:id/read', async (req, res) => {
+router.put('/:id/read', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const notification = await Notification.findByIdAndUpdate(
-            req.params.id,
+        const notification = await Notification.findOneAndUpdate(
+            { _id: req.params.id, userId: req.user.id },
             { read: true },
             { new: true }
         );
@@ -167,9 +158,9 @@ router.put('/:id/read', async (req, res) => {
 });
 
 // Delete notification
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const notification = await Notification.findByIdAndDelete(req.params.id);
+        const notification = await Notification.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
 
         if (!notification) {
             return res.status(404).json({ success: false, message: 'Notification not found' });
@@ -182,9 +173,9 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Clear all notifications
-router.post('/clear/all', async (req, res) => {
+router.post('/clear/all', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const result = await Notification.deleteMany({});
+        const result = await Notification.deleteMany({ userId: req.user.id });
 
         res.status(200).json({ 
             success: true, 

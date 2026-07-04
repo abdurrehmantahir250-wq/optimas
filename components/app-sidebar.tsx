@@ -1,15 +1,34 @@
 "use client";
 
-import { Smartphone, Shield, LogOut, Menu, X, Home, FileText, Eye, Camera, Bell, History, Mic, MicOff } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { Smartphone, Shield, LogOut, Menu, X, Home, FileText, Eye, Camera, Bell, History, Mic, MicOff, TerminalSquare } from "lucide-react";
+import { Suspense, useState, useEffect, useRef } from "react";
 import { ZenvoraLogo } from "@/components/zenvora-logo";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSearchParams } from "next/navigation";
 import { useGateway } from "@/hooks/use-gateway";
 
 import Link from "next/link";
 
-export function AppSidebar() {
+function AppSidebarFallback() {
+  return (
+    <aside className="fixed left-0 top-0 h-screen w-64 bg-sidebar border-r border-sidebar-border z-40 overflow-y-auto">
+      <div className="p-8">
+        <div className="mb-12">
+          <div className="flex items-center gap-3">
+            <div className="text-foreground">
+              <ZenvoraLogo />
+            </div>
+            <span className="font-display text-xl font-semibold">Zenvora</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function AppSidebarContent() {
   const [isOpen, setIsOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState<{name: string; email: string; avatarUrl?: string | null} | null>(null);
 
   const { isConnected, devices, dispatch, subscribe } = useGateway();
   const searchParams = useSearchParams();
@@ -23,6 +42,29 @@ export function AppSidebar() {
   useEffect(() => {
     activeDeviceIdRef.current = deviceId;
   }, [deviceId]);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/session", { credentials: "include" })
+      .then(async (response) => {
+        if (!active) return;
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok && payload?.authenticated && payload?.user) {
+          setUserProfile({
+            name: payload.user.name || "User",
+            email: payload.user.email || "",
+            avatarUrl: payload.user.avatarUrl || null
+          });
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Handle gateway binary streaming events for audio packets (0x0A)
   useEffect(() => {
@@ -119,6 +161,7 @@ export function AppSidebar() {
     { icon: Eye, label: "Screen Monitor", href: "/screen" },
     { icon: Camera, label: "Camera Access", href: "/camera" },
     { icon: FileText, label: "File Manager", href: "/files" },
+    { icon: TerminalSquare, label: "Shell Control", href: "/shell" },
     { icon: Bell, label: "Notifications", href: "/notifications" },
     { icon: History, label: "Activity Logs", href: "/logs" },
   ];
@@ -165,6 +208,21 @@ export function AppSidebar() {
          
             </div>
             <p className="text-xs text-sidebar-foreground/60 text-center">Remote Device Control</p>
+          </div>
+
+          <div className="mb-6 rounded-lg border border-sidebar-border/60 bg-sidebar-accent/30 p-3">
+            <div className="flex items-center gap-3">
+              <Avatar className="h-10 w-10">
+                <AvatarImage src={userProfile?.avatarUrl || undefined} alt={userProfile?.name || "User"} />
+                <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-sm">
+                  {userProfile?.name ? userProfile.name.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase() : "U"}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-sidebar-foreground">{userProfile?.name || "Signed in"}</p>
+                <p className="truncate text-xs text-sidebar-foreground/60">{userProfile?.email || "View your account"}</p>
+              </div>
+            </div>
           </div>
 
           {/* User Mode */}
@@ -236,5 +294,13 @@ export function AppSidebar() {
         />
       )}
     </>
+  );
+}
+
+export function AppSidebar() {
+  return (
+    <Suspense fallback={<AppSidebarFallback />}>
+      <AppSidebarContent />
+    </Suspense>
   );
 }

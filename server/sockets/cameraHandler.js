@@ -32,6 +32,7 @@ function parseCameraIndex(payload = {}) {
 
 function handleCameraCommand(ws, packet, activeConnections) {
     const { action, targetDeviceId, payload } = packet;
+    console.log('[cameraHandler] Received camera command:', packet);
 
     console.log(`[CAMERA ENGINE] Processing [${action}] for Target Node: ${targetDeviceId}`);
 

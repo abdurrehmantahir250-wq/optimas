@@ -40,7 +40,7 @@ type PendingRequest = {
 };
 
 export function useFileAgent() {
-  const { isConnected, devices, dispatch: gatewayDispatch, resolveTarget, subscribe } = useGateway();
+  const { isConnected, devices, dispatch: gatewayDispatch, refreshDevices, resolveTarget, subscribe } = useGateway();
 
   const [selectedDevice, setSelectedDevice] = useState("");
   const [currentPath, setCurrentPath] = useState("");
@@ -85,6 +85,12 @@ export function useFileAgent() {
   useEffect(() => {
     selectedDeviceRef.current = selectedDevice;
   }, [selectedDevice]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    if (devices.length > 0) return;
+    void refreshDevices();
+  }, [devices.length, isConnected, refreshDevices]);
 
   useEffect(() => {
     currentPathRef.current = currentPath;

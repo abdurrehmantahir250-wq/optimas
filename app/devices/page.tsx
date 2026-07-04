@@ -3,6 +3,7 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import Select from "react-select";
 import {
   Laptop, Smartphone, Tablet, Battery, Cpu, Activity,
   MapPin, Bell, Globe, AppWindow, RefreshCw, Layers, ShieldCheck,
@@ -127,6 +128,7 @@ function DevicesPageContent() {
   const [loadingDevices, setLoadingDevices] = useState(true);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   // Detail States for Selected Device
   const [topApps, setTopApps] = useState<TopApp[]>([]);
@@ -141,30 +143,92 @@ function DevicesPageContent() {
 
   // Fetch registered devices from MongoDB via the custom endpoint
   const fetchDevices = async (shouldSelectFirst = true) => {
-    try {
-      setLoadingDevices(true);
-      const res = await fetch("/api/network/devices");
-      if (!res.ok) throw new Error("Failed to fetch devices");
-      const data = await res.json();
+  try {
+    setLoadingDevices(true);
 
-      if (data.success && Array.isArray(data.devices)) {
-        setDevices(data.devices);
+    const res = await fetch("/api/network/devices");
+    if (!res.ok) throw new Error("Failed to fetch devices");
 
-        // Select device based on URL query param, or fallback to first
-        const paramId = searchParams.get("deviceId");
-        if (paramId && data.devices.some((d: Device) => d.deviceId === paramId)) {
-          setSelectedDeviceId(paramId);
-        } else if (shouldSelectFirst && data.devices.length > 0) {
-          setSelectedDeviceId(data.devices[0].deviceId);
-        }
+    const data = await res.json();
+
+    if (data.success && Array.isArray(data.devices)) {
+      setDevices(data.devices);
+
+      const paramId = searchParams.get("deviceId");
+
+      if (
+        paramId &&
+        data.devices.some((d: Device) => d.deviceId === paramId)
+      ) {
+        setSelectedDeviceId(paramId);
+      } else if (shouldSelectFirst && data.devices.length > 0) {
+        setSelectedDeviceId(data.devices[0].deviceId);
       }
-    } catch (err) {
-      console.error("Error fetching devices:", err);
-    } finally {
-      setLoadingDevices(false);
     }
-  };
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setLoadingDevices(false);
+    setInitialLoading(false); // <-- important
+  }
+};
+const deviceOptions = devices.map((device) => ({
+  value: device.deviceId,
+  label: `${device.hostname || device.deviceId.substring(0, 8)} (${device.status})`,
+}));
+function DevicesPageSkeleton() {
+  return (
+    <div className="flex h-screen bg-background">
+      <AppSidebar />
 
+      <main className="flex-1 lg:ml-64 overflow-auto">
+        <div className="p-6 lg:p-12 max-w-7xl mx-auto animate-pulse">
+
+          {/* Header */}
+          <div className="flex justify-between items-center mb-10">
+            <div>
+              <div className="h-10 w-80 bg-muted rounded-lg mb-3" />
+              <div className="h-4 w-64 bg-muted rounded" />
+            </div>
+
+            <div className="flex gap-3">
+              <div className="h-11 w-11 rounded-xl bg-muted" />
+              <div className="h-11 w-64 rounded-xl bg-muted" />
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-3 mb-8">
+            <div className="h-10 w-40 rounded-xl bg-muted" />
+            <div className="h-10 w-40 rounded-xl bg-muted" />
+            <div className="h-10 w-40 rounded-xl bg-muted" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+            {/* Left */}
+            <div className="lg:col-span-7 space-y-6">
+              <div className="h-72 rounded-2xl bg-muted" />
+              <div className="h-56 rounded-2xl bg-muted" />
+              <div className="h-[320px] rounded-2xl bg-muted" />
+            </div>
+
+            {/* Right */}
+            <div className="lg:col-span-5 space-y-6">
+              {[1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className="h-52 rounded-2xl bg-muted"
+                />
+              ))}
+            </div>
+
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
   // Fetch logs, stats, and notifications details for selected device
   const fetchDeviceDetails = async (deviceId: string) => {
     if (!deviceId) return;
@@ -267,7 +331,9 @@ function DevicesPageContent() {
     const gb = ramValue / (1024 * 1024 * 1024);
     return `${gb.toFixed(1)} GB`;
   };
-
+if (loadingDevices && devices.length === 0) {
+  return <DevicesPageSkeleton />;
+}
   const formatActivityLog = (log: ActivityLogItem) => {
     if (log.windowTitle) {
       const app = log.appName || log.processName || "Browser";
@@ -381,33 +447,48 @@ function DevicesPageContent() {
                 {loadingDevices ? (
                   <div className="h-11 w-[260px] animate-pulse bg-muted rounded-xl border border-border" />
                 ) : (
-                  <select
-                    value={selectedDeviceId}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      setSelectedDeviceId(id);
-                      startTransition(() => {
-                        router.replace(`/devices?deviceId=${id}`);
-                      });
-                    }}
-                    className="h-11 w-[260px] px-4 py-2 bg-card hover:bg-card/85 text-foreground border border-border rounded-xl text-sm font-medium shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/20 cursor-pointer appearance-none pr-10"
-                    style={{
-                      backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
-                      backgroundRepeat: "no-repeat",
-                      backgroundPosition: "right 1rem center",
-                      backgroundSize: "1em",
-                    }}
-                  >
-                    {devices.length === 0 ? (
-                      <option value="">No Devices Found</option>
-                    ) : (
-                      devices.map((device) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.hostname || device.deviceId.substring(0, 8)} ({device.status})
-                        </option>
-                      ))
-                    )}
-                  </select>
+                 <Select
+  options={deviceOptions}
+  value={deviceOptions.find((d) => d.value === selectedDeviceId)}
+  onChange={(option) => {
+    const id = option?.value || "";
+    setSelectedDeviceId(id);
+
+    startTransition(() => {
+      router.replace(`/devices?deviceId=${id}`);
+    });
+  }}
+  isLoading={loadingDevices}
+  isDisabled={loadingDevices}
+  placeholder="Select Device..."
+  classNamePrefix="react-select"
+  styles={{
+    control: (base) => ({
+      ...base,
+      backgroundColor: "hsl(var(--card))",
+      borderColor: "hsl(var(--border))",
+      borderRadius: "12px",
+      minHeight: "44px",
+      boxShadow: "none",
+    }),
+    menu: (base) => ({
+      ...base,
+      backgroundColor: "hsl(var(--card))",
+      border: "1px solid hsl(var(--border))",
+    }),
+    option: (base, state) => ({
+      ...base,
+      backgroundColor: state.isFocused
+        ? "hsl(var(--muted))"
+        : "transparent",
+      color: "hsl(var(--foreground))",
+    }),
+    singleValue: (base) => ({
+      ...base,
+      color: "hsl(var(--foreground))",
+    }),
+  }}
+/>
                 )}
               </div>
             </div>

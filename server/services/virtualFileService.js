@@ -10,6 +10,20 @@ async function getRepos() {
     };
 }
 
+function getRequestUserId(req) {
+    return String(req?.user?.id || req?.user?._id || '').trim();
+}
+
+function assertOwnedRecord(record, req, resourceName) {
+    const userId = getRequestUserId(req);
+    if (!record || !userId || String(record.userId || '') !== userId) {
+        const error = new Error(`${resourceName} not found.`);
+        error.status = 404;
+        throw error;
+    }
+    return record;
+}
+
 function normalizeFolder(folder) {
     let value = String(folder || '/').trim().replace(/\\/g, '/');
     if (!value.startsWith('/')) value = `/${value}`;
@@ -215,7 +229,8 @@ async function uploadDeviceMedia(req, filePayload) {
     const type = mediaType === 'video' ? 'video' : 'image';
     const pageType = String(source).toLowerCase() === 'screen' ? 'screen' : 'camera';
     const virtualFolder = resolveMediaVirtualFolder(source, type);
-    await ensureVirtualFolderPath(deviceId, virtualFolder);
+    const userId = req?.user?.id || req?.user?._id || null;
+    await ensureVirtualFolderPath(deviceId, virtualFolder, userId);
 
     const cloudFolder = `zenvora/${deviceId}/${type}s`;
     const fileName = filePayload.originalname || `${type}_${Date.now()}`;
@@ -231,6 +246,7 @@ async function uploadDeviceMedia(req, filePayload) {
 
     const doc = await files.create({
         deviceId,
+        userId: req?.user?.id || req?.user?._id || null,
         name: fileName,
         originalPath: '',
         virtualFolder,
@@ -262,7 +278,7 @@ async function uploadDeviceMedia(req, filePayload) {
     };
 }
 
-async function ensureVirtualFolderPath(deviceId, targetPath) {
+async function ensureVirtualFolderPath(deviceId, targetPath, userId = null) {
     const { folders } = await getRepos();
     const normalized = normalizeFolder(targetPath);
     if (normalized === '/') return normalized;
@@ -276,6 +292,7 @@ async function ensureVirtualFolderPath(deviceId, targetPath) {
         if (!existing) {
             await folders.create({
                 deviceId,
+                userId,
                 name: segment,
                 path,
                 parentPath
@@ -287,9 +304,9 @@ async function ensureVirtualFolderPath(deviceId, targetPath) {
     return normalized;
 }
 
-async function ensureDefaultMediaFolders(deviceId) {
+async function ensureDefaultMediaFolders(deviceId, userId = null) {
     for (const path of DEFAULT_MEDIA_FOLDERS) {
-        await ensureVirtualFolderPath(deviceId, path);
+        await ensureVirtualFolderPath(deviceId, path, userId);
     }
 }
 
@@ -350,11 +367,13 @@ async function listTrashItems(req) {
     };
 }
 
-async function createVirtualFolder(body) {
+async function createVirtualFolder(reqOrBody) {
     const { folders } = await getRepos();
+    const body = reqOrBody?.body || reqOrBody || {};
     const deviceId = String(body.deviceId || 'unknown-device');
     const parentPath = normalizeFolder(body.parentPath || '/');
     const name = String(body.name || '').trim();
+    const userId = reqOrBody?.user?.id || reqOrBody?.user?._id || body?.userId || null;
 
     if (!name) {
         const error = new Error('Folder name is required.');
@@ -370,7 +389,13 @@ async function createVirtualFolder(body) {
         throw error;
     }
 
-    const doc = await folders.create({ deviceId, name, path, parentPath });
+    const doc = await folders.create({
+        deviceId,
+        userId,
+        name,
+        path,
+        parentPath
+    });
     return { success: true, item: serializeFolder(doc) };
 }
 
@@ -390,8 +415,9 @@ async function uploadVirtualFile(req, filePayload) {
     const resourceType = detectResourceType(filePayload.mimetype, filePayload.originalname);
     const pageType = String(body.pageType || 'file').toLowerCase();
     const folder = `zenvora/${deviceId}/virtual${virtualFolder === '/' ? '' : virtualFolder}`;
+    const userId = req?.user?.id || req?.user?._id || null;
 
-    await ensureVirtualFolderPath(deviceId, virtualFolder);
+    await ensureVirtualFolderPath(deviceId, virtualFolder, userId);
 
     const result = await uploadBufferToCloudinary(filePayload.buffer, {
         folder,
@@ -402,6 +428,7 @@ async function uploadVirtualFile(req, filePayload) {
 
     const doc = await files.create({
         deviceId,
+        userId: req?.user?.id || req?.user?._id || null,
         name: filePayload.originalname,
         originalPath,
         virtualFolder,
@@ -427,6 +454,9 @@ async function renameVirtualFile(req, id, body) {
         throw error;
     }
 
+    const existing = await files.findById(id);
+    assertOwnedRecord(existing, req, 'File');
+
     const doc = await files.updateById(id, { name });
     if (!doc) {
         const error = new Error('File not found.');
@@ -440,6 +470,9 @@ async function renameVirtualFile(req, id, body) {
 async function moveVirtualFile(req, id, body) {
     const { files } = await getRepos();
     const virtualFolder = normalizeFolder(body.virtualFolder || '/');
+    const existing = await files.findById(id);
+    assertOwnedRecord(existing, req, 'File');
+
     const doc = await files.updateById(id, { virtualFolder });
     if (!doc) {
         const error = new Error('File not found.');
@@ -453,7 +486,8 @@ async function moveVirtualFile(req, id, body) {
 async function shareVirtualFile(req, id) {
     const { files } = await getRepos();
     const doc = await files.findById(id);
-    if (!doc || doc.isDeleted) {
+    assertOwnedRecord(doc, req, 'File');
+    if (doc.isDeleted) {
         const error = new Error('File not found.');
         error.status = 404;
         throw error;
@@ -481,14 +515,10 @@ async function lookupShareToken(req, token) {
     return { success: true, item: serializeFile(doc, req) };
 }
 
-async function deleteVirtualFolder(id) {
+async function deleteVirtualFolder(req, id) {
     const { files, folders } = await getRepos();
     const folder = await folders.findById(id);
-    if (!folder) {
-        const error = new Error('Folder not found.');
-        error.status = 404;
-        throw error;
-    }
+    assertOwnedRecord(folder, req, 'Folder');
 
     const path = normalizeFolder(folder.path);
     const [childFolder, childFile] = await Promise.all([
@@ -506,8 +536,11 @@ async function deleteVirtualFolder(id) {
     return { success: true, id: String(folder._id || folder.id) };
 }
 
-async function deleteVirtualFile(id) {
+async function deleteVirtualFile(req, id) {
     const { files } = await getRepos();
+    const existing = await files.findById(id);
+    assertOwnedRecord(existing, req, 'File');
+
     const doc = await files.softDeleteById(id);
     if (!doc) {
         const error = new Error('File not found.');
@@ -525,6 +558,9 @@ async function deleteVirtualFile(id) {
 
 async function restoreVirtualFile(req, id) {
     const { files } = await getRepos();
+    const existing = await files.findById(id);
+    assertOwnedRecord(existing, req, 'File');
+
     const doc = await files.restoreById(id);
     if (!doc) {
         const error = new Error('File not found.');
@@ -535,8 +571,11 @@ async function restoreVirtualFile(req, id) {
     return { success: true, item: serializeFile(doc, req) };
 }
 
-async function purgeVirtualFile(id) {
+async function purgeVirtualFile(req, id) {
     const { files } = await getRepos();
+    const existing = await files.findById(id);
+    assertOwnedRecord(existing, req, 'File');
+
     const doc = await files.purgeById(id);
     if (!doc) {
         const error = new Error('File not found.');

@@ -7,6 +7,12 @@ const VirtualFolderSchema = new mongoose.Schema({
         trim: true,
         index: true
     },
+    userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null,
+        index: true
+    },
     name: {
         type: String,
         required: true,

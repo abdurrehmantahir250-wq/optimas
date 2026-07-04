@@ -23,7 +23,7 @@ export default function DeviceThreeChart({ deviceId }: DeviceThreeChartProps) {
   useEffect(() => {
     if (!containerRef.current || !canvasRef.current) return;
 
-    // Dimensions
+  
     const width = containerRef.current.clientWidth || 800;
     const height = 550; // Increased height for full page feel
 

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 const virtualFileService = require("../../../../server/services/virtualFileService");
+const { verifyRequestDeviceAccess } = require("../../../../server/middleware/auth");
 
 function jsonError(error: unknown, fallback: string) {
   const err = error as { message?: string; status?: number };
@@ -25,8 +26,13 @@ export async function POST(request: NextRequest) {
       source: String(formData.get("source") || "camera"),
     };
 
+    const access = await verifyRequestDeviceAccess(request, body.deviceId);
+    if (!access.ok) {
+      return NextResponse.json({ success: false, message: access.message }, { status: access.status });
+    }
+
     const payload = await virtualFileService.uploadDeviceMedia(
-      { ...request, body },
+      { body, user: access.user },
       {
         buffer,
         originalname: file.name,

@@ -3,9 +3,11 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { QrCode, Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, Trash2, MoreVertical, FileText } from "lucide-react";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Plus, Smartphone, Laptop, Battery, Zap, Wifi, Eye, MoreVertical, FileText } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useGateway } from "@/hooks/use-gateway";
 
 interface DashboardDevice {
@@ -30,77 +32,82 @@ const fallbackDevices: DashboardDevice[] = [
 export default function DashboardPage() {
   const { devices: gatewayDevices, refreshDevices, socket } = useGateway();
   const router = useRouter();
-  const [backendDevices, setBackendDevices] = useState<any[]>([]);
-  const [showQRModal, setShowQRModal] = useState(false);
+  const [showPairModal, setShowPairModal] = useState(false);
+  const [pairingToken, setPairingToken] = useState<string | null>(null);
+  const [pairingUserId, setPairingUserId] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [openControlMenu, setOpenControlMenu] = useState<string | null>(null);
+const [loading, setLoading] = useState(true);
+useEffect(() => {
+  const loadDevices = async () => {
+    setLoading(true);
 
-  const fetchDeviceMetadata = async () => {
     try {
-      const response = await fetch("/api/network/live-agents");
-      if (!response.ok) return;
-      const payload = await response.json();
-      if (payload.success && Array.isArray(payload.devices)) {
-        setBackendDevices(payload.devices);
-      }
-    } catch (error) {
-      console.warn("Unable to fetch device metadata:", error);
+      await refreshDevices();
+    } finally {
+      setLoading(false);
     }
   };
 
-  useEffect(() => {
+  void loadDevices();
+
+  const interval = setInterval(() => {
     void refreshDevices();
-    void fetchDeviceMetadata();
-  }, [refreshDevices]);
+  }, 30000);
 
-  useEffect(() => {
-    if (!gatewayDevices) return;
-    void fetchDeviceMetadata();
-  }, [gatewayDevices.length]);
-
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleSocketMessage = (event: MessageEvent) => {
-      if (typeof event.data !== "string") return;
-      try {
-        const packet = JSON.parse(event.data);
-        if (packet.type === "device_status_update") {
-          void fetchDeviceMetadata();
-        }
-      } catch {
-        // ignore malformed messages
+  return () => clearInterval(interval);
+}, []);
+// useEffect(() => {
+//   if (gatewayDevices.length > 0) {
+//     setLoading(false);
+//   }
+// }, [gatewayDevices]);
+  const loadSession = async () => {
+    try {
+      const response = await fetch("/api/auth/session", { credentials: "include" });
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (payload.success && payload.user) {
+        setPairingToken(payload.user.pairingToken || null);
+        setPairingUserId(payload.user.pairingUserId || null);
       }
-    };
-
-    socket.addEventListener("message", handleSocketMessage);
-    return () => socket.removeEventListener("message", handleSocketMessage);
-  }, [socket]);
-
-  const devices = useMemo(() => {
-    if (!gatewayDevices || gatewayDevices.length === 0) {
-      return fallbackDevices;
+    } catch {
+      // ignore
     }
+  };
 
-    return gatewayDevices.map((device) => {
-      const metadata = backendDevices.find((item) => item.value === device.value) || {};
-      const battery = typeof metadata.battery === "number" ? metadata.battery : null;
-      const storage = typeof metadata.storage === "number" ? metadata.storage : null;
-      return {
-        id: device.value,
-        name: metadata.label || device.label || device.value,
-        model: metadata.platform || device.role || "Unknown",
-        status: metadata.status || "online",
-        battery,
-        storage,
-        lastSeen: metadata.lastSeen ? new Date(metadata.lastSeen).toLocaleString() : "now",
-        network: metadata.localIp ? "LAN" : metadata.publicIp ? "WAN" : "Unknown",
-        role: device.role || "AGENT",
-        localIp: metadata.localIp || "",
-        publicIp: metadata.publicIp || "",
-      } as DashboardDevice;
-    });
-  }, [backendDevices, gatewayDevices]);
+
+
+ useEffect(() => {
+  if (!gatewayDevices.length) return;
+
+  setDevices(
+    gatewayDevices.map((device) => ({
+      id: device.value,
+      name: device.label || device.value,
+      model: device.platform || device.role || "Unknown",
+      status: device.status === "online" ? "online" : "offline",
+      battery:
+        typeof device.battery === "number" ? device.battery : null,
+      storage:
+        typeof device.storage === "number" ? device.storage : null,
+      lastSeen: device.lastSeen
+        ? new Date(device.lastSeen).toLocaleString()
+        : "now",
+      network: device.localIp
+        ? "LAN"
+        : device.publicIp
+        ? "WAN"
+        : "Unknown",
+      role: device.role || "AGENT",
+      platform: device.platform,
+      localIp: device.localIp,
+      publicIp: device.publicIp,
+    }))
+  );
+}, [gatewayDevices]);
+
+  const [devices, setDevices] = useState<DashboardDevice[]>(fallbackDevices);
 
   const onlineCount = devices.filter((device) => device.status === "online").length;
   const totalCount = devices.length;
@@ -128,8 +135,11 @@ export default function DashboardPage() {
                 </p>
               </div>
               <Button
-                onClick={() => setShowQRModal(true)}
-                className="bg-foreground hover:bg-foreground/90 text-background px-6 h-12 rounded-full group inline-flex items-center gap-2"
+                onClick={() => {
+                  setShowPairModal(true);
+                  void loadSession();
+                }}
+                className="bg-foreground hover:bg-foreground/90 text-background px-6 h-12 rounded-full inline-flex items-center gap-2"
               >
                 <Plus className="w-4 h-4" />
                 Pair Device
@@ -138,7 +148,17 @@ export default function DashboardPage() {
           </div>
 
           {/* Stats overview */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+{loading ? (
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+    {[1, 2, 3].map((i) => (
+      <Card key={i} className="p-6">
+        <Skeleton className="h-4 w-24 mb-4" />
+        <Skeleton className="h-10 w-16" />
+      </Card>
+    ))}
+  </div>
+) : (
+   <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
             <Card className="p-6 border border-border bg-card hover-lift">
               <div className="flex items-start justify-between">
                 <div>
@@ -175,13 +195,48 @@ export default function DashboardPage() {
               </div>
             </Card>
           </div>
+)}
+
+
+
+        
 
           {/* Devices list */}
           <div>
             <h2 className="text-xl font-display mb-6">Paired Devices</h2>
-            <div className="space-y-4">
-              {devices.map((device) => (
-                <Card
+
+<div className="space-y-4">
+  {loading ? (
+    [...Array(3)].map((_, i) => (
+      <Card key={i} className="p-6">
+        <div className="flex gap-4">
+          <Skeleton className="h-12 w-12 rounded-lg" />
+
+          <div className="flex-1">
+            <Skeleton className="h-5 w-48 mb-2" />
+            <Skeleton className="h-4 w-32 mb-6" />
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              {[1, 2, 3, 4].map((j) => (
+                <div key={j}>
+                  <Skeleton className="h-3 w-16 mb-2" />
+                  <Skeleton className="h-4 w-full" />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-2">
+              <Skeleton className="h-9 w-24 rounded-md" />
+              <Skeleton className="h-9 w-24 rounded-md" />
+              <Skeleton className="h-9 w-28 rounded-md" />
+            </div>
+          </div>
+        </div>
+      </Card>
+    ))
+  ) : (
+    devices.map((device) => (
+        <Card
                   key={device.id}
                   className="p-6 border border-border bg-card hover:bg-accent/5 transition-colors"
                 >
@@ -335,50 +390,111 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </Card>
-              ))}
-            </div>
+    ))
+  )}
+</div>
+
+
+          
           </div>
+             {!loading && devices.length === 0 && (
+  <Card className="p-12 text-center">
+    <p className="text-muted-foreground">
+      No paired devices found.
+    </p>
+  </Card>
+)}
+        </div>
 
-          {/* QR Modal */}
-          {showQRModal && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <Card className="max-w-md w-full p-8 bg-card border border-border">
-                <h3 className="text-xl font-display mb-4">Pair New Device</h3>
+        <Dialog open={showPairModal} onOpenChange={setShowPairModal}>
+          <DialogContent showCloseButton={false} className="w-[min(95vw,1200px)] max-w-[1200px] h-[90vh] overflow-hidden rounded-[1.5rem] border border-border bg-background shadow-2xl">
+            <div className="absolute top-4 right-4">
+              <DialogClose asChild>
+                <Button variant="ghost" size="icon" className="rounded-full p-2">
+                  ✕
+                </Button>
+              </DialogClose>
+            </div>
 
-                <div className="space-y-6">
-                  {/* QR Code placeholder */}
-                  <div className="flex justify-center">
-                    <div className="w-64 h-64 bg-muted rounded-lg flex items-center justify-center border-2 border-border">
-                      <QrCode className="w-24 h-24 text-muted-foreground/50" />
+            <DialogHeader className="px-8 pt-8 pb-4">
+              <DialogTitle>Pair Device ON Zenvora Agent</DialogTitle>
+              <DialogDescription className="mt-3 text-sm text-muted-foreground max-w-2xl">
+                Before downloading, you must agree to the following terms and conditions.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex flex-col ">
+              <div className="px-8 ">
+                <div className="">
+                  <h3 className="text-xl font-semibold mb-4">Terms and Conditions</h3>
+                  <div className="space-y-4 text-sm leading-7 text-muted-foreground">
+                    <p>This is the Android Software Development Kit License Agreement.</p>
+                    <div>
+                      <h4 className="font-semibold text-foreground">1. Introduction</h4>
+                      <p>The Android Software Development Kit is licensed to you subject to the terms of this agreement. The agreement forms a legally binding contract between you and Google in relation to your use of the SDK.</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-foreground">2. Accepting this License Agreement</h4>
+                      <p>To use the SDK, you must first agree to the license agreement. By using the SDK, you acknowledge that you accept these terms and agree to comply with them.</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-foreground">3. SDK License from Google</h4>
+                      <p>Google grants you a limited, worldwide, non-exclusive license to use the SDK solely to develop applications for compatible implementations of Android.</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-foreground">4. Use of the SDK by You</h4>
+                      <p>You agree to use the SDK only for permitted purposes and in compliance with applicable laws, privacy expectations, and Google’s policies.</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-foreground">5. Privacy and Information</h4>
+                      <p>Google may collect usage statistics and other information to improve the SDK. Any such data collection is managed under Google’s privacy policy.</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-foreground">6. General Legal Terms</h4>
+                      <p>The agreement is governed by the laws of the State of California, and you agree to submit to the exclusive jurisdiction of courts located in Santa Clara County, California.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-6 space-y-4">
+                  <div className="">
+                    <h3 className="text-xl font-semibold mb-4">User Tokens</h3>
+                    <div className="space-y-4  gap-8 flex">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">User Id</p>
+                        <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingToken ?? "Loading..."}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Token No</p>
+                        <p className="mt-2 break-all font-mono text-lg text-foreground">{pairingUserId ?? "Loading..."}</p>
+                      </div>
                     </div>
                   </div>
 
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Or use pairing code:</p>
-                    <input
-                      type="text"
-                      placeholder="Enter pairing code"
-                      className="w-full px-4 py-3 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-foreground/20"
-                    />
-                  </div>
+                  {/* <label className="inline-flex items-center gap-3 text-sm text-muted-foreground">
+                    <input type="checkbox" className="h-4 w-4 rounded border-border text-foreground focus:ring-foreground" />
+                    I have read and agree with the above terms and conditions.
+                  </label> */}
+                </div>
+              </div>
 
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      className="flex-1 border-border"
-                      onClick={() => setShowQRModal(false)}
-                    >
-                      Cancel
+              <div className="border-t border-border px-8 py-5 bg-background">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-muted-foreground">Zenvora_agent_Patch_2.0.23.exe</p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <Button variant="outline" onClick={() => setShowPairModal(false)}>
+                      Close
                     </Button>
-                    <Button className="flex-1 bg-foreground hover:bg-foreground/90 text-background">
-                      Pair
+                    <Button className="bg-foreground text-background hover:bg-foreground/90" onClick={() => setShowPairModal(false)}>
+                      Confirm Download
                     </Button>
                   </div>
                 </div>
-              </Card>
+              </div>
             </div>
-          )}
-        </div>
+          </DialogContent>
+        </Dialog>
+     
       </main>
     </div>
   );

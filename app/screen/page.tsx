@@ -77,6 +77,8 @@ export default function ScreenPage() {
   });
   const [hasLiveFrame, setHasLiveFrame] = useState(false);
   const [liveFrameCount, setLiveFrameCount] = useState(0);
+  const [scanningDisplays, setScanningDisplays] = useState(false);
+const [capturingScreenshot, setCapturingScreenshot] = useState(false);
   const [capturedScreenshots, setCapturedScreenshots] = useState<
     Array<{ id: string; url: string; time: string }>
   >([]);
@@ -289,21 +291,36 @@ export default function ScreenPage() {
       return;
     }
     setCommandStatus(`Sent ${action} → ${result.target}`);
+  
   };
 
   const probeDisplays = async () => {
+  if (scanningDisplays) return;
+
+  setScanningDisplays(true);
+
+  try {
     await refreshDevices();
+
     const target = selectedDeviceRef.current || resolveTarget();
+
     if (!target) {
       setCommandStatus("No live agent. Start agent: cd zenvora_agent && cargo run");
       return;
     }
+
     setDetectedDisplays([]);
     setActiveDisplay("");
+
     dispatchControl("PROBE_DISPLAYS", {}, target);
     dispatchControl("LIST_DISPLAYS", {}, target);
+
     setCommandStatus("Scanning displays on agent...");
-  };
+  } finally {
+    // thora delay taake ack aajaye
+    setTimeout(() => setScanningDisplays(false), 1500);
+  }
+};
 
   const startScreenStream = async () => {
     await refreshDevices();
@@ -431,16 +448,26 @@ export default function ScreenPage() {
     }
   };
 
-  const handleScreenshot = async () => {
+ const handleScreenshot = async () => {
+  if (capturingScreenshot) return;
+
+  setCapturingScreenshot(true);
+
+  try {
     if (lastFrameBlobRef.current) {
       await saveScreenshotToGallery(lastFrameBlobRef.current);
       return;
     }
+
     dispatchControl("CAPTURE_SCREENSHOT", {
       display: activeDisplayRef.current,
     });
+
     setCommandStatus("Capturing screenshot...");
-  };
+  } finally {
+    setTimeout(() => setCapturingScreenshot(false), 1500);
+  }
+};
 
   const handleFullscreen = () => {
     const stage = stageRef.current;
@@ -646,13 +673,18 @@ export default function ScreenPage() {
             <div className="xl:col-span-8 flex flex-col gap-6">
               <div className="flex flex-wrap gap-3">
                 <Button
-                  onClick={probeDisplays}
-                  disabled={!canControl}
-                  variant="outline"
-                  className="gap-2 border-border hover:bg-accent/10"
-                >
-                  <Radar className="w-4 h-4" /> Scan Displays
-                </Button>
+  onClick={probeDisplays}
+  disabled={!canControl || scanningDisplays}
+  variant="outline"
+  className="gap-2 border-border hover:bg-accent/10"
+>
+  <RefreshCw
+    className={`w-4 h-4 ${scanningDisplays ? "animate-spin" : ""}`}
+  />
+  {scanningDisplays ? "Scanning..." : "Scan Displays"}
+</Button>
+                
+               
                 <Button
                   onClick={startScreenStream}
                   disabled={!canControl || isStreaming}
@@ -775,13 +807,16 @@ export default function ScreenPage() {
 
               <div className="flex flex-wrap gap-3">
                 <Button
-                  variant="outline"
-                  disabled={!canControl}
-                  onClick={handleScreenshot}
-                  className="border-border hover:bg-accent/10 gap-2"
-                >
-                  <Download className="w-4 h-4" /> Screenshot
-                </Button>
+  variant="outline"
+  disabled={!canControl || capturingScreenshot}
+  onClick={handleScreenshot}
+  className="border-border hover:bg-accent/10 gap-2"
+>
+  <Download
+    className={`w-4 h-4 ${capturingScreenshot ? "animate-spin" : ""}`}
+  />
+  {capturingScreenshot ? "Capturing..." : "Screenshot"}
+</Button>
                 <Button
                   variant="outline"
                   disabled={!canControl || !isStreaming}

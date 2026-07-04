@@ -485,7 +485,9 @@ export function FileManager() {
                   </p>
                   <div className="space-y-1">
                     {driveRoots.length === 0 ? (
-                      <p className="text-xs text-muted-foreground px-2">Loading drives…</p>
+                      <p className="text-xs text-muted-foreground px-2">
+                        {agent.loading ? "Loading drives…" : "No drives found"}
+                      </p>
                     ) : (
                       driveRoots.map((root) => (
                         <button

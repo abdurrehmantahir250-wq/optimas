@@ -3,13 +3,14 @@ const router = express.Router();
 const ActivityLog = require('../models/ActivityLog');
 const BrowserHistory = require('../models/BrowserHistory');
 const AppHistory = require('../models/AppHistory');
+const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
 
 // Get activity logs with filters
-router.get('/activity', async (req, res) => {
+router.get('/activity', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, category, status, limit = 50, offset = 0 } = req.query;
 
-        const query = {};
+        const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
         if (category) query.category = category;
         if (status) query.status = status;
@@ -34,11 +35,11 @@ router.get('/activity', async (req, res) => {
 });
 
 // Get browser history with filters
-router.get('/browser-history', async (req, res) => {
+router.get('/browser-history', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, browser, domain, limit = 100, offset = 0 } = req.query;
 
-        const query = {};
+        const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
         if (browser) query.browser = browser;
         if (domain) query.domain = domain;
@@ -63,11 +64,11 @@ router.get('/browser-history', async (req, res) => {
 });
 
 // Get app history with filters
-router.get('/app-history', async (req, res) => {
+router.get('/app-history', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, appType, limit = 100, offset = 0 } = req.query;
 
-        const query = {};
+        const query = { userId: req.user.id };
         if (deviceId) query.deviceId = deviceId;
         if (appType) query.appType = appType;
 
@@ -91,7 +92,7 @@ router.get('/app-history', async (req, res) => {
 });
 
 // Create activity log
-router.post('/activity', async (req, res) => {
+router.post('/activity', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, action, category, device, details, status, metadata } = req.body;
 
@@ -104,6 +105,7 @@ router.post('/activity', async (req, res) => {
 
         const log = new ActivityLog({
             deviceId,
+            userId: req.user.id,
             action,
             category: category || 'device',
             device,
@@ -124,7 +126,7 @@ router.post('/activity', async (req, res) => {
 });
 
 // Create browser history entries (from Rust agent)
-router.post('/browser-history', async (req, res) => {
+router.post('/browser-history', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, entries } = req.body;
 
@@ -137,6 +139,7 @@ router.post('/browser-history', async (req, res) => {
 
         const historyEntries = entries.map(entry => ({
             deviceId,
+            userId: req.user.id,
             browser: entry.browser,
             url: entry.url,
             title: entry.title,
@@ -157,7 +160,7 @@ router.post('/browser-history', async (req, res) => {
 });
 
 // Create app history entries (from Rust agent)
-router.post('/app-history', async (req, res) => {
+router.post('/app-history', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, entries } = req.body;
 
@@ -170,6 +173,7 @@ router.post('/app-history', async (req, res) => {
 
         const appEntries = entries.map(entry => ({
             deviceId,
+            userId: req.user.id,
             appName: entry.appName,
             executablePath: entry.executablePath,
             lastOpened: entry.lastOpened ? new Date(entry.lastOpened) : new Date(),
@@ -189,11 +193,11 @@ router.post('/app-history', async (req, res) => {
 });
 
 // Get browser statistics
-router.get('/browser-stats', async (req, res) => {
+router.get('/browser-stats', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId } = req.query;
 
-        const query = deviceId ? { deviceId } : {};
+        const query = deviceId ? { userId: req.user.id, deviceId } : { userId: req.user.id };
 
         const stats = await BrowserHistory.aggregate([
             { $match: query },
@@ -219,42 +223,11 @@ router.get('/browser-stats', async (req, res) => {
 });
 
 // Get most visited domains
-router.get('/top-domains', async (req, res) => {
-    try {
-        const { deviceId, limit = 20 } = req.query;
 
-        const query = deviceId ? { deviceId } : {};
-
-        const domains = await BrowserHistory.aggregate([
-            { $match: query },
-            {
-                $group: {
-                    _id: '$domain',
-                    count: { $sum: 1 },
-                    lastVisit: { $max: '$visitTime' }
-                }
-            },
-            {
-                $sort: { count: -1 }
-            },
-            {
-                $limit: parseInt(limit)
-            }
-        ]);
-
-        res.status(200).json({
-            success: true,
-            domains
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-// Get activity statistics by category
-router.get('/activity-stats', async (req, res) => {
+router.get('/activity-stats', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId } = req.query;
-        const query = deviceId ? { deviceId } : {};
+        const query = deviceId ? { userId: req.user.id, deviceId } : { userId: req.user.id };
 
         const stats = await ActivityLog.aggregate([
             { $match: query },
@@ -273,37 +246,89 @@ router.get('/activity-stats', async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 });
-// Get most used apps
-router.get('/top-apps', async (req, res) => {
+
+
+const mongoose = require('mongoose');
+
+router.get('/top-domains', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const { deviceId, limit = 20 } = req.query;
 
-        const query = deviceId ? { deviceId } : {};
+        const query = {
+            userId: new mongoose.Types.ObjectId(req.user.id)
+        };
+
+        if (deviceId) {
+            query.deviceId = deviceId;
+        }
+
+        const domains = await BrowserHistory.aggregate([
+            { $match: query },
+            {
+                $group: {
+                    _id: "$domain",
+                    count: { $sum: 1 },
+                    lastVisit: { $max: "$visitTime" }
+                }
+            },
+            { $sort: { count: -1 } },
+            { $limit: Number(limit) || 20 }
+        ]);
+
+        res.status(200).json({
+            success: true,
+            domains
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+
+router.get('/top-apps', attachUser, requireDeviceAccess, async (req, res) => {
+    try {
+        const { deviceId, limit = 20 } = req.query;
+
+        const query = {
+            userId: new mongoose.Types.ObjectId(req.user.id)
+        };
+
+        if (deviceId) {
+            query.deviceId = deviceId;
+        }
 
         const apps = await AppHistory.aggregate([
             { $match: query },
             {
                 $group: {
-                    _id: '$appName',
+                    _id: "$appName",
                     count: { $sum: 1 },
-                    lastOpened: { $max: '$lastOpened' }
+                    lastOpened: { $max: "$lastOpened" }
                 }
             },
-            {
-                $sort: { count: -1 }
-            },
-            {
-                $limit: parseInt(limit)
-            }
+            { $sort: { count: -1 } },
+            { $limit: Number(limit) || 20 }
         ]);
 
         res.status(200).json({
             success: true,
             apps
         });
+
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
+
+
+
+
 
 module.exports = router;

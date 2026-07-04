@@ -16,6 +16,7 @@ const {
     isFileBinaryFrame,
     broadcastFileBinaryFrame
 } = require('./fileHandler');
+const { handleShellCommand, SHELL_ACTION_TOKENS } = require('./shellHandler');
 const ActivityLog = require('../models/ActivityLog');
 const Device = require('../models/Device');
 const {
@@ -24,6 +25,7 @@ const {
     handleHistoryAgentResponse,
     extractDeviceIdFromAgentSocket
 } = require('./historyHandler');
+const { userOwnsDevice } = require('../services/authService');
 
 const CAMERA_ACTION_TOKENS = [
     'SWITCH_CAMERA',
@@ -60,10 +62,15 @@ const FRAME_SNAPSHOT = 0x02;
 const FRAME_RAW_RGB = 0x03;
 const FRAME_AUDIO_STREAM = 0x0A;
 
-function getLiveDeviceOptions() {
-    return Array.from(activeConnections.keys())
-        .filter((key) => key.startsWith('AGENT_') || key.startsWith('DEVICE_'))
-        .map((key) => {
+function getLiveDeviceOptions(userId = null) {
+    return Array.from(activeConnections.entries())
+        .filter(([, socket]) => {
+            const auth = socket?.authContext;
+            if (!auth || auth.kind !== 'agent') return false;
+            if (!userId) return true;
+            return String(auth.userId || '') === String(userId);
+        })
+        .map(([key]) => {
             const deviceId = key.replace(/^AGENT_/, '').replace(/^DEVICE_/, '');
             return {
                 value: deviceId,
@@ -73,18 +80,63 @@ function getLiveDeviceOptions() {
         });
 }
 
-function broadcastDeviceList() {
-    const devices = getLiveDeviceOptions();
-    console.log(`[GATEWAY] Broadcasting device list (${devices.length} agent(s))`);
+async function getDeviceOptions(userId = null) {
+    const liveDevices = getLiveDeviceOptions(userId);
+    const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
+    const query = userId ? { userId } : {};
+    const allDevices = await Device.find(query).sort({ lastSeen: -1 }).lean();
 
-    activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(JSON.stringify({
-                type: 'device_list_update',
-                devices
-            }));
-        }
+    return allDevices.map((device) => {
+        const deviceId = String(device.deviceId || '');
+        const isLive = liveDeviceIds.has(deviceId);
+        return {
+            value: deviceId,
+            label: device.hostname || deviceId,
+            role: isLive ? 'AGENT' : 'DEVICE',
+            status: isLive ? 'online' : 'offline',
+            platform: device.platform || 'unknown',
+            localIp: device.localIp || '',
+            publicIp: device.publicIp || '',
+            battery: device.battery ?? null,
+            storage: device.storage ?? null,
+            lastSeen: device.lastSeen ? new Date(device.lastSeen).toISOString() : null,
+            network: device.network || '',
+            hostname: device.hostname || '',
+            username: device.username || '',
+        };
     });
+}
+
+async function broadcastDeviceList() {
+    const dashboardSockets = Array.from(activeConnections.entries()).filter(([key, clientSocket]) => {
+        return key.startsWith('DASHBOARD_') && clientSocket.readyState === 1;
+    });
+
+    for (const [key, clientSocket] of dashboardSockets) {
+        const userId = clientSocket?.authContext?.kind === 'user' ? clientSocket.authContext.user?.id : null;
+        const devices = await getDeviceOptions(userId);
+        clientSocket.send(JSON.stringify({
+            type: 'device_list_update',
+            devices
+        }));
+    }
+}
+
+function forwardPacketToDashboards(packet, activeConnections) {
+    const payload = typeof packet === 'string' ? packet : JSON.stringify(packet);
+    activeConnections.forEach((clientSocket, key) => {
+        if (!key.startsWith('DASHBOARD_') || clientSocket.readyState !== 1) return;
+        clientSocket.send(payload);
+    });
+}
+
+function isShellResponsePacket(packet) {
+    return Boolean(
+        packet && (
+            packet.type === 'shell_output' ||
+            (packet.type === 'sys_ack' && packet.shell && typeof packet.shell === 'object')
+        )
+    );
 }
 
 function toBuffer(message) {
@@ -140,8 +192,18 @@ function isFileAck(packet) {
 
 function isScreenAck(packet) {
     if (packet.channel === 'screen') return true;
+    if (packet.type === 'screen_telemetry_stream') return true;
     if (typeof packet.last_action === 'string' && packet.last_action.includes('SCREEN')) return true;
+    if (typeof packet.last_action === 'string' && (packet.last_action === 'LIST_DISPLAYS' || packet.last_action === 'PROBE_DISPLAYS')) {
+        return true;
+    }
+    if (typeof packet.action === 'string' && (packet.action.includes('SCREEN') || packet.action === 'LIST_DISPLAYS' || packet.action === 'PROBE_DISPLAYS')) {
+        return true;
+    }
     if (typeof packet.last_action === 'string' && SCREEN_ACTION_TOKENS.includes(packet.last_action)) {
+        return true;
+    }
+    if (packet.hardware_metrics && Array.isArray(packet.hardware_metrics.available_displays)) {
         return true;
     }
     return false;
@@ -161,8 +223,23 @@ function isKnownBinaryFrame(buffer) {
     );
 }
 
-function handleSocketMessage(ws, message) {
-    console.log("[LOG] Raw Message received from agent:", message);
+async function authorizeSocketAction(ws, targetDeviceId) {
+    if (!targetDeviceId) return true;
+    if (ws.authContext?.kind === 'agent') {
+        return String(ws.authContext.deviceId || '') === String(targetDeviceId);
+    }
+    if (ws.authContext?.kind === 'user') {
+        return userOwnsDevice(ws.authContext.user?.id, String(targetDeviceId));
+    }
+    return false;
+}
+
+async function handleSocketMessage(ws, message) {
+    //  console.log("=================================");
+    // console.log("MESSAGE FROM:", ws.connectionKey);
+    // console.log(message.toString());
+    // console.log("=================================");
+    
     const raw = toBuffer(message);
 
     if (isKnownBinaryFrame(raw) || isBinaryMediaFrame(raw)) {
@@ -187,13 +264,15 @@ function handleSocketMessage(ws, message) {
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
 
+            const userId = ws.authContext?.kind === 'user' ? ws.authContext.user?.id : null;
             console.log(`[GATEWAY] Stream connection assigned registry key: ${connectionKey}`);
+            const devices = await getDeviceOptions(userId);
             ws.send(JSON.stringify({
                 type: 'sys_ack',
                 status: 'ready',
-                devices: getLiveDeviceOptions()
+                devices
             }));
-            broadcastDeviceList();
+            void broadcastDeviceList();
             return;
         }
 
@@ -202,36 +281,48 @@ function handleSocketMessage(ws, message) {
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
 
+            const userId = ws.authContext?.kind === 'user' ? ws.authContext.user?.id : null;
             console.log(`[GATEWAY] Dashboard registered: ${connectionKey}`);
+            const devices = await getDeviceOptions(userId);
             ws.send(JSON.stringify({
                 type: 'sys_ack',
                 status: 'ready',
-                devices: getLiveDeviceOptions()
+                devices
             }));
-            broadcastDeviceList();
+            void broadcastDeviceList();
             return;
         }
 
-      if (packet.type === "device_status_update" && ws.connectionKey?.startsWith("AGENT_")) {
-    void handleDeviceStatusUpdate(ws, packet, activeConnections);
-    return;
-}
+        if (packet.type === 'device_status_update' && ws.connectionKey?.startsWith('AGENT_')) {
+            void handleDeviceStatusUpdate(ws, packet, activeConnections);
+            return;
+        }
 
-if (
-    packet.type === "sys_ack" &&
-    packet.hardware_metrics &&
-    ws.connectionKey?.startsWith("AGENT_")
-) {
-    void persistHardwareMetrics(ws, packet, activeConnections);
+        if (isShellResponsePacket(packet) && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
+            forwardPacketToDashboards(packet, activeConnections);
+            return;
+        }
 
-    if (isScreenAck(packet)) {
-        handleScreenTelemetry(ws, packet, activeConnections);
-    } else {
-        handleCameraTelemetry(ws, packet, activeConnections);
-    }
+        if (packet.type === 'sys_ack' && (packet.file_result || isFileAck(packet))) {
+            handleFileTelemetry(ws, packet, activeConnections);
+            return;
+        }
 
-    return;
-}
+        if (
+            (packet.type === 'sys_ack' || packet.hardware_metrics) &&
+            ws.connectionKey?.startsWith('AGENT_') &&
+            !isFileAck(packet)
+        ) {
+            void persistHardwareMetrics(ws, packet, activeConnections);
+
+            if (isScreenAck(packet)) {
+                handleScreenTelemetry(ws, packet, activeConnections);
+            } else {
+                handleCameraTelemetry(ws, packet, activeConnections);
+            }
+
+            return;
+        }
 
         if (packet.type === 'activity_log' && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
             void handleActivityLog(ws, packet, activeConnections);
@@ -247,6 +338,15 @@ if (
             packet.targetDeviceId =
                 packet.targetDeviceId || packet.target_device_id || packet.targetDevice;
             console.log(`[GATEWAY] dispatch_control ${packet.action} -> ${packet.targetDeviceId || 'MISSING'}`);
+
+            if (!await authorizeSocketAction(ws, packet.targetDeviceId)) {
+                ws.send(JSON.stringify({
+                    type: 'sys_ack',
+                    status: 'error',
+                    message: 'Unauthorized device control request.'
+                }));
+                return;
+            }
         }
 
         if (packet.type === 'dispatch_control' && isHistoryCommand(packet.action)) {
@@ -277,13 +377,13 @@ if (
             return;
         }
 
-        if (packet.type === 'dispatch_control' && CAMERA_ACTION_TOKENS.includes(packet.action)) {
-            handleCameraCommand(ws, packet, activeConnections);
+        if (packet.type === 'dispatch_control' && SHELL_ACTION_TOKENS.includes(packet.action)) {
+            handleShellCommand(ws, packet, activeConnections);
             return;
         }
 
-        if (packet.type === 'sys_ack' && (packet.file_result || isFileAck(packet))) {
-            handleFileTelemetry(ws, packet, activeConnections);
+        if (packet.type === 'dispatch_control' && CAMERA_ACTION_TOKENS.includes(packet.action)) {
+            handleCameraCommand(ws, packet, activeConnections);
             return;
         }
 
@@ -604,6 +704,7 @@ async function persistHardwareMetrics(ws, packet, activeConnections) {
 
 async function handleActivityLog(ws, packet, activeConnections) {
     const deviceId = extractDeviceIdFromAgentSocket(ws);
+    const userId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
     if (!deviceId) {
         console.warn('[ACTIVITY] Agent activity_log ignored — missing device id');
         return;
@@ -617,6 +718,7 @@ async function handleActivityLog(ws, packet, activeConnections) {
 
     const logPayload = {
         deviceId,
+        userId,
         action: String(packet.action || 'unknown'),
         category: String(packet.category || 'system'),
         device: String(packet.device || ''),

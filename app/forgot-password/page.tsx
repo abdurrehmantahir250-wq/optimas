@@ -19,9 +19,16 @@ export default function ForgotPasswordPage() {
     event.preventDefault();
     setLoading(true);
     try {
-      // Simulate recovery flow or post to recovery endpoint if exists
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Request failed");
+      }
       toast.success("Recovery code sent to your registered email!");
-      // Redirect to OTP verification page
       router.push(`/verify-otp?email=${encodeURIComponent(email)}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Request failed");

@@ -9,6 +9,13 @@ const DeviceSchema = new mongoose.Schema(
         trim: true
     },
 
+    userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null,
+        index: true
+    },
+
     platform: {
         type: String,
         enum: ['windows', 'mac', 'android', 'linux', 'unknown'],

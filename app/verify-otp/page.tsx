@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, Suspense, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,14 @@ import { AuthLayout } from "@/components/auth-layout";
 import { ShieldCheck } from "lucide-react";
 
 export default function VerifyOTPPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading…</div>}>
+      <VerifyOTPPageContent />
+    </Suspense>
+  );
+}
+
+function VerifyOTPPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const email = searchParams.get("email") || "operator@zenvora.local";
@@ -58,9 +66,17 @@ export default function VerifyOTPPage() {
 
     setLoading(true);
     try {
-      // Simulate verification flow
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, otp: code, newPassword: "changeme123" })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Verification failed");
+      }
       toast.success("Verification successful! Credentials unlocked.");
-      router.push("/dashboard");
+      router.push("/login");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Verification failed");
     } finally {
@@ -68,8 +84,21 @@ export default function VerifyOTPPage() {
     }
   };
 
-  const handleResend = () => {
-    toast.success("A new 6-digit code has been dispatched to your email.");
+  const handleResend = async () => {
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to resend OTP");
+      }
+      toast.success("A new 6-digit code has been dispatched to your email.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to resend OTP");
+    }
   };
 
   return (

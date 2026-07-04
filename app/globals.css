@@ -316,7 +316,22 @@
   top: 30px;
   height: 50vh;
 }
-
+.aoas,#radix-_r_0_{
+  max-width: 90% !important;
+  border-radius: 10px !important;
+  overflow: auto !important;
+  background-color: lab(98.2705% -.00655651 .761867) !important;
+  background: linear-gradient(90deg, lab(98.2705% -.00655651 .761867) 0%, lab(98.2705% -.00655651 .761867) 100%) !important;
+  height: 90% !important;
+  /* margin: 20px auto !important; */
+}
+#radix-_r_2_,.aoas2{
+  text-align: left !important;
+}
+#radix-_r_1_,.aoas3{
+      text-align: left !important;
+    font-size: 32px !important;
+}
 .right {
   right: -25px !important;
 }

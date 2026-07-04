@@ -14,6 +14,7 @@ export function useGateway() {
     setIsConnected(gatewayClient.isOpen());
     setDevices(gatewayClient.getDevices());
     setSocket(gatewayClient.getSocket());
+    void gatewayClient.refreshDevices();
 
     return gatewayClient.subscribe((event) => {
       if (event.type === "connected") {
@@ -24,18 +25,34 @@ export function useGateway() {
         setIsConnected(false);
         setSocket(null);
       }
-      if (event.type === "devices") setDevices(event.devices);
+      if (event.type === "devices") {
+        console.log("EVENT DEVICES:", event.devices);
+
+        // Empty update ignore karo
+        if (event.devices.length === 0 && devicesRef.current.length > 0) {
+          return;
+        }
+
+        setDevices(event.devices);
+      }
     });
   }, []);
 
   useEffect(() => {
-    if (!isConnected) return;
-    const poll = setInterval(() => {
+    if (isConnected) {
       void gatewayClient.refreshDevices();
-    }, 3000);
-    return () => clearInterval(poll);
+    }
   }, [isConnected]);
 
+  // useEffect(() => {
+  //   if (!isConnected) return;
+
+  //   // const poll = setInterval(() => {
+  //   //   void gatewayClient.refreshDevices();
+  //   // }, 30000); // 30 sec
+
+  //   return () => clearInterval(poll);
+  // }, [isConnected]);
   const resolveTarget = useCallback(
     (override?: string) => override || devicesRef.current[0]?.value || "",
     []

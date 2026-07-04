@@ -10,6 +10,7 @@ type DeviceOption = {
 
 type DeviceRecord = {
   deviceId: string;
+  hostname?: string;
   localIp?: string;
   publicIp?: string;
   platform?: string;
@@ -19,25 +20,34 @@ type DeviceRecord = {
   storage?: number | null;
 };
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { getConnectionRegistry } = require("../../../../server/sockets/registry");
     const { getLiveDeviceOptions } = require("../../../../server/sockets/handler");
+    const { verifyRequestAuth } = require("../../../../server/middleware/auth");
     const Device = require("../../../../server/models/Device");
+
+    const user = await verifyRequestAuth(request);
+    if (!user?.id) {
+      return NextResponse.json({ success: false, devices: [], message: 'Authentication required.' }, { status: 401 });
+    }
+
     getConnectionRegistry();
 
-    const liveDevices = getLiveDeviceOptions() as DeviceOption[];
-    const deviceIds = liveDevices.map((device) => device.value);
-    const deviceRecords = (await Device.find({ deviceId: { $in: deviceIds } }).lean()) as DeviceRecord[];
+    const liveDevices = getLiveDeviceOptions(user.id) as DeviceOption[];
+    const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
+    const deviceRecords = (await Device.find({ userId: user.id }).sort({ lastSeen: -1 }).lean()) as DeviceRecord[];
 
-    const devices = liveDevices.map((device) => {
-      const record = deviceRecords.find((doc) => doc.deviceId === device.value) || ({} as DeviceRecord);
+    const devices = deviceRecords.map((record) => {
+      const isLive = liveDeviceIds.has(record.deviceId);
       return {
-        ...device,
+        value: record.deviceId,
+        label: record.hostname || record.deviceId,
+        role: "AGENT",
+        platform: record.platform || null,
         localIp: record.localIp || null,
         publicIp: record.publicIp || null,
-        platform: record.platform || null,
-        status: record.status || (device.role === "AGENT" ? "online" : "offline"),
+        status: isLive ? "online" : "offline",
         battery: typeof record.battery === 'number' ? record.battery : null,
         storage: typeof record.storage === 'number' ? record.storage : null,
         lastSeen: record.lastSeen ? record.lastSeen.toISOString() : null,

@@ -29,6 +29,7 @@ function broadcastHistoryTelemetry(deviceId, payload, activeConnections) {
     const message = JSON.stringify({
         type: 'history_telemetry',
         deviceId,
+        data: payload.entries,
         ...payload
     });
 
@@ -41,19 +42,20 @@ function broadcastHistoryTelemetry(deviceId, payload, activeConnections) {
 
 async function handleHistoryAgentResponse(ws, packet, activeConnections) {
     const deviceId = extractDeviceIdFromAgentSocket(ws);
+    const userId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
     if (!deviceId) {
         console.warn('[HISTORY] Agent response ignored — missing device id');
         return;
     }
 
     try {
-        const result = await persistHistoryPayload(deviceId, packet);
+        const result = await persistHistoryPayload(deviceId, { ...packet, userId });
         console.log(`[HISTORY] Synced ${result.command} for ${deviceId}: ${result.count} entries`);
 
         broadcastHistoryTelemetry(deviceId, {
             command: result.command,
             count: result.count,
-            entries: packet.entries || result.count,
+            entries: Array.isArray(packet.data) ? packet.data : Array.isArray(packet.entries) ? packet.entries : [],
             syncedAt: new Date().toISOString()
         }, activeConnections);
     } catch (error) {

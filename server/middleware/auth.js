@@ -32,9 +32,26 @@ function extractToken(req) {
     return cookies[AUTH_COOKIE] || null;
 }
 
-function attachUser(req, res, next) {
+function isPublicApiRoute(pathname = "") {
+    pathname = pathname.split("?")[0];
+
+    const publicPaths = [
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/auth/forgot-password",
+        "/api/auth/reset-password",
+        "/api/auth/google",
+        "/api/virtual-files/share",
+        '/api/auth/agent/pair'
+    ];
+
+    return publicPaths.some(path =>
+        pathname === path || pathname.startsWith(path + "/")
+    );
+}
+async function attachUser(req, res, next) {
     const token = extractToken(req);
-    const payload = verifyUserToken(token);
+    const payload = await verifyUserToken(token);
     if (!payload?.sub) {
         return res.status(401).json({ success: false, message: 'Authentication required.' });
     }
@@ -49,9 +66,9 @@ function attachUser(req, res, next) {
     return next();
 }
 
-function optionalUser(req, res, next) {
+async function optionalUser(req, res, next) {
     const token = extractToken(req);
-    const payload = verifyUserToken(token);
+    const payload = await verifyUserToken(token);
     if (payload?.sub) {
         req.user = {
             id: payload.sub,
@@ -61,6 +78,51 @@ function optionalUser(req, res, next) {
         };
         req.authToken = token;
     }
+    return next();
+}
+
+async function requireAuthUnlessPublic(req, res, next) {
+    if (isPublicApiRoute(req.originalUrl)) {
+        return next();
+    }
+
+    return attachUser(req, res, next);
+}
+
+function extractRequestedUserId(req) {
+    const candidates = [
+        req.query?.userId,
+        req.body?.userId,
+        req.params?.userId,
+        req.headers?.['x-user-id'],
+        req.headers?.['x-user-id']
+    ];
+
+    for (const candidate of candidates) {
+        if (candidate !== undefined && candidate !== null && String(candidate).trim() !== '') {
+            return String(candidate).trim();
+        }
+    }
+
+    return null;
+}
+
+async function requireUserIdOwnership(req, res, next) {
+    if (!req.user?.id) {
+        return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+
+    const requestedUserId = extractRequestedUserId(req);
+    if (!requestedUserId) {
+        req.requestedUserId = req.user.id;
+        return next();
+    }
+
+    if (String(requestedUserId) !== String(req.user.id)) {
+        return res.status(403).json({ success: false, message: 'userId does not belong to the authenticated user.' });
+    }
+
+    req.requestedUserId = requestedUserId;
     return next();
 }
 
@@ -90,9 +152,27 @@ async function enforceDeviceAccess(req, res, next) {
     return next();
 }
 
+async function requireDeviceAccess(req, res, next) {
+    const deviceId = extractDeviceId(req);
+    if (!deviceId) {
+        return res.status(400).json({ success: false, message: 'deviceId is required.' });
+    }
+    if (!req.user?.id) {
+        return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+
+    const allowed = await userOwnsDevice(req.user.id, String(deviceId));
+    if (!allowed) {
+        return res.status(403).json({ success: false, message: 'You do not have access to this device.' });
+    }
+
+    req.deviceId = String(deviceId);
+    return next();
+}
+
 async function verifyRequestAuth(request) {
     const token = extractToken(request);
-    const payload = verifyUserToken(token);
+    const payload = await verifyUserToken(token);
     if (!payload?.sub) return null;
     return {
         id: payload.sub,
@@ -117,7 +197,10 @@ module.exports = {
     AUTH_COOKIE,
     attachUser,
     optionalUser,
+    requireAuthUnlessPublic,
+    requireUserIdOwnership,
     enforceDeviceAccess,
+    requireDeviceAccess,
     extractToken,
     verifyRequestAuth,
     verifyRequestDeviceAccess,

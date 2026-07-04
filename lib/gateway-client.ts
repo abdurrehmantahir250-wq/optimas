@@ -4,6 +4,16 @@ export type DeviceOption = {
   value: string;
   label: string;
   role?: string;
+  status?: string;
+  platform?: string;
+  localIp?: string;
+  publicIp?: string;
+  battery?: number | null;
+  storage?: number | null;
+  lastSeen?: string | null;
+  network?: string;
+  hostname?: string;
+  username?: string;
 };
 
 export type GatewayEvent =
@@ -93,14 +103,23 @@ class GatewayClient {
 
       try {
         const packet = JSON.parse(event.data) as Record<string, unknown>;
+
+        console.log("WS PACKET:", packet);
         this.trackStreamingState(packet);
+
         if (
           (packet.type === "device_list_update" || packet.type === "sys_ack") &&
           Array.isArray(packet.devices)
         ) {
-          this.devices = packet.devices as DeviceOption[];
-          this.emit({ type: "devices", devices: this.devices });
+          console.log("WS DEVICES:", packet.devices);
+
+          const incoming = packet.devices as DeviceOption[];
+          if (!this.sameDevices(this.devices, incoming)) {
+            this.devices = incoming;
+            this.emit({ type: "devices", devices: this.devices });
+          }
         }
+
         this.emit({ type: "json", packet });
       } catch {
         // ignore malformed packets
@@ -121,20 +140,59 @@ class GatewayClient {
       }
     };
   }
+private sameDevices(a: DeviceOption[], b: DeviceOption[]) {
+  if (a.length !== b.length) return false;
 
+  const sortFn = (x: DeviceOption, y: DeviceOption) =>
+    x.value.localeCompare(y.value);
+
+  const aa = [...a].sort(sortFn);
+  const bb = [...b].sort(sortFn);
+
+  return aa.every((d, i) => {
+    const x = bb[i];
+
+    return (
+      d.value === x.value &&
+      d.status === x.status &&
+      d.battery === x.battery &&
+      d.storage === x.storage &&
+      d.lastSeen === x.lastSeen
+    );
+  });
+}
   async refreshDevices(): Promise<DeviceOption[]> {
     try {
-      const response = await fetch("/api/network/live-agents");
-      if (!response.ok) return this.devices;
-      const data = await response.json();
-      if (data.success && Array.isArray(data.devices)) {
-        this.devices = data.devices as DeviceOption[];
+      const requests = [
+        fetch("/api/network/live-agents", { cache: "no-store", credentials: "include" }),
+        fetch("/api/network/devices", { cache: "no-store", credentials: "include" }),
+      ];
+
+      const results = await Promise.allSettled(requests);
+      const incoming: DeviceOption[] = [];
+
+      for (const result of results) {
+        if (result.status !== "fulfilled" || !result.value.ok) continue;
+
+        const data = await result.value.json().catch(() => null);
+        if (data?.success && Array.isArray(data.devices)) {
+          incoming.push(...(data.devices as DeviceOption[]));
+        }
+      }
+
+      const unique = incoming.filter(
+        (device, index, arr) => arr.findIndex((item) => item.value === device.value) === index
+      );
+
+      if (unique.length > 0 && !this.sameDevices(this.devices, unique)) {
+        this.devices = unique;
         this.emit({ type: "devices", devices: this.devices });
       }
+
+      return this.devices;
     } catch {
-      // REST fallback is optional
+      return this.devices;
     }
-    return this.devices;
   }
 
   dispatch(action: string, targetDeviceId: string, payload: Record<string, unknown> = {}): boolean {

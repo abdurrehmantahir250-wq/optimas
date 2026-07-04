@@ -6,6 +6,7 @@ const {
     deleteVirtualFile,
     serviceErrorResponse
 } = require('../services/virtualFileService');
+const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
 
 const router = express.Router();
 const upload = multer({
@@ -13,7 +14,7 @@ const upload = multer({
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-router.get('/list', async (req, res) => {
+router.get('/list', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         const payload = await listDeviceMedia(req);
         return res.status(200).json(payload);
@@ -24,7 +25,7 @@ router.get('/list', async (req, res) => {
     }
 });
 
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', attachUser,upload.single('file'), requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: 'No media file received.' });
@@ -55,9 +56,9 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const payload = await deleteVirtualFile(req.params.id);
+        const payload = await deleteVirtualFile(req, req.params.id);
         return res.status(200).json(payload);
     } catch (error) {
         console.error('[MEDIA] Delete failed:', error.message);

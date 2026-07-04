@@ -11,13 +11,13 @@ interface AuthLayoutProps {
 
 export function AuthLayout({ children, title, subtitle }: AuthLayoutProps) {
   return (
-    <div className="min-hscreen w-full bg-background flex font-sans overflow-hidden relative">
+    <div className="min-hscreen w-full bg-background flex font-sans overflow-hidden relative h-[95vh]">
       {/* Visual Side (Left) - Displaying the user's custom animated card */}
       <div className="hidden lg:flex lg:w-1/2 bg-muted/30 relative items-center justify-center  overflow-hidden select-none border-r border-border/10">
 
         {/* User Custom Animated Logo Display Component */}
-        <div className="transition-all duration-700 delay-500 opacity-100 translate-y-0 w-full max-w-full">
-          <div className="relative h-[600px] w-full from-card via-sidebar">
+        <div className="transition-all duration-700 delay-500 opacity-100 translate-y-0 h-[100%] w-full max-w-full">
+          <div className="relative h-[100%] w-full from-card via-sidebar">
             {/* Ambient blur blobs */}
             <div className="absolute inset-0 opacity-30">
               <div className="absolute top-0 left-1/4 w-72 h-72 bg-foreground/20 rounded-full mix-blend-multiply filter blur-3xl animate-blob"></div>

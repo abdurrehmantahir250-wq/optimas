@@ -31,7 +31,7 @@ function normalizeAppType(value) {
     return 'app';
 }
 
-async function syncBrowserHistory(deviceId, entries) {
+async function syncBrowserHistory(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries)) {
         return { count: 0 };
     }
@@ -41,6 +41,7 @@ async function syncBrowserHistory(deviceId, entries) {
 
     const docs = entries.map((entry) => ({
         deviceId,
+        userId,
         browser: normalizeBrowser(entry.browser),
         url: String(entry.url || ''),
         title: String(entry.title || entry.url || 'Untitled'),
@@ -54,7 +55,7 @@ async function syncBrowserHistory(deviceId, entries) {
     return { count: docs.length };
 }
 
-async function syncAppHistory(deviceId, entries) {
+async function syncAppHistory(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries)) {
         return { count: 0 };
     }
@@ -64,6 +65,7 @@ async function syncAppHistory(deviceId, entries) {
 
     const docs = entries.map((entry) => ({
         deviceId,
+        userId,
         appName: String(entry.appName || entry.app_name || 'Unknown'),
         executablePath: String(entry.executablePath || entry.executable_path || ''),
         lastOpened: parseFlexibleDate(entry.lastOpened || entry.last_opened),
@@ -75,7 +77,7 @@ async function syncAppHistory(deviceId, entries) {
     return { count: docs.length };
 }
 
-async function syncSystemNotifications(deviceId, entries) {
+async function syncSystemNotifications(deviceId, entries, userId = null) {
     if (!deviceId || !Array.isArray(entries)) {
         return { count: 0 };
     }
@@ -86,6 +88,7 @@ async function syncSystemNotifications(deviceId, entries) {
         await Notification.updateOne(
             {
                 deviceId,
+                userId,
                 app: String(entry.app || "System"),
                 title: String(entry.title || "Notification"),
                 message: String(entry.message || "")
@@ -93,6 +96,7 @@ async function syncSystemNotifications(deviceId, entries) {
             {
                 $setOnInsert: {
                     deviceId,
+                    userId,
                     app: String(entry.app || "System"),
                     title: String(entry.title || "Notification"),
                     message: String(entry.message || ""),
@@ -114,15 +118,20 @@ async function syncSystemNotifications(deviceId, entries) {
 }
 async function persistHistoryPayload(deviceId, packet) {
     const command = String(packet.command || '');
-    const data = Array.isArray(packet.data) ? packet.data : [];
+    const data = Array.isArray(packet.data)
+        ? packet.data
+        : Array.isArray(packet.entries)
+            ? packet.entries
+            : [];
+    const userId = packet.userId || null;
 
     switch (command) {
         case 'FETCH_BROWSER_HISTORY':
-            return { command, ...(await syncBrowserHistory(deviceId, data)) };
+            return { command, ...(await syncBrowserHistory(deviceId, data, userId)) };
         case 'FETCH_APP_HISTORY':
-            return { command, ...(await syncAppHistory(deviceId, data)) };
+            return { command, ...(await syncAppHistory(deviceId, data, userId)) };
         case 'FETCH_SYSTEM_NOTIFICATIONS':
-            return { command, ...(await syncSystemNotifications(deviceId, data)) };
+            return { command, ...(await syncSystemNotifications(deviceId, data, userId)) };
         default:
             return { command, count: 0 };
     }

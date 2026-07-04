@@ -2,11 +2,12 @@ const express = require('express');
 const router = express.Router();
 const Device = require('../models/Device');
 const { getLiveDeviceOptions } = require('../sockets/handler');
+const { attachUser, requireUserIdOwnership, requireDeviceAccess } = require('../middleware/auth');
 
-router.get('/devices', async (req, res) => {
+router.get('/devices', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const allDevices = await Device.find().sort({ lastSeen: -1 }).lean();
-        const liveDevices = getLiveDeviceOptions();
+        const allDevices = await Device.find({ userId: req.user.id }).sort({ lastSeen: -1 }).lean();
+        const liveDevices = getLiveDeviceOptions(req.user.id);
         const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
 
         const devices = allDevices.map((device) => {
@@ -25,14 +26,14 @@ router.get('/devices', async (req, res) => {
     }
 });
 
-router.get('/devices/:deviceId', async (req, res) => {
+router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDeviceAccess, async (req, res) => {
     try {
-        const device = await Device.findOne({ deviceId: req.params.deviceId }).lean();
+        const device = await Device.findOne({ userId: req.user.id, deviceId: req.params.deviceId }).lean();
         if (!device) {
             return res.status(404).json({ success: false, message: 'Device not found' });
         }
 
-        const liveDevices = getLiveDeviceOptions();
+        const liveDevices = getLiveDeviceOptions(req.user.id);
         const isLive = liveDevices.some((d) => d.value === device.deviceId);
 
         res.status(200).json({
@@ -47,51 +48,41 @@ router.get('/devices/:deviceId', async (req, res) => {
     }
 });
 
-
-router.get('/live-agents', async (req, res) => {
+router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const liveDevices = getLiveDeviceOptions();
-        const deviceIds = liveDevices.map((device) => device.value);
-        const deviceRecords = await Device.find({ deviceId: { $in: deviceIds } }).lean();
+        const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
+        const deviceRecords = await Device.find({ userId: req.user.id }).sort({ lastSeen: -1 }).lean();
 
-       const devices = liveDevices.map((device) => {
-    const record = deviceRecords.find((doc) => doc.deviceId === device.value) || {};
-
-    return {
-        ...device,
-
-        platform: record.platform || "unknown",
-        status: record.status || (device.role === "AGENT" ? "online" : "offline"),
-
-        localIp: record.localIp || "",
-        publicIp: record.publicIp || "",
-
-        battery: record.battery,
-        storage: record.storage,
-        network: record.network || "",
-
-        latitude: record.latitude,
-        longitude: record.longitude,
-
-        country: record.country || "",
-        region: record.region || "",
-        city: record.city || "",
-        isp: record.isp || "",
-
-        timezone: record.timezone || "",
-        hostname: record.hostname || "",
-        username: record.username || "",
-
-        osVersion: record.osVersion || "",
-        architecture: record.architecture || "",
-        cpu: record.cpu || "",
-        ram: record.ram,
-
-        lastSeen: record.lastSeen
-            ? record.lastSeen.toISOString()
-            : null,
-    };
-});
+        const devices = deviceRecords.map((record) => {
+            const isLive = liveDeviceIds.has(record.deviceId);
+            return {
+                value: record.deviceId,
+                label: record.hostname || record.deviceId,
+                role: 'AGENT',
+                platform: record.platform || 'unknown',
+                status: isLive ? 'online' : 'offline',
+                localIp: record.localIp || '',
+                publicIp: record.publicIp || '',
+                battery: record.battery,
+                storage: record.storage,
+                network: record.network || '',
+                latitude: record.latitude,
+                longitude: record.longitude,
+                country: record.country || '',
+                region: record.region || '',
+                city: record.city || '',
+                isp: record.isp || '',
+                timezone: record.timezone || '',
+                hostname: record.hostname || '',
+                username: record.username || '',
+                osVersion: record.osVersion || '',
+                architecture: record.architecture || '',
+                cpu: record.cpu || '',
+                ram: record.ram,
+                lastSeen: record.lastSeen ? record.lastSeen.toISOString() : null,
+            };
+        });
 
         res.status(200).json({ success: true, devices });
     } catch (error) {
@@ -99,7 +90,7 @@ router.get('/live-agents', async (req, res) => {
     }
 });
 
-router.post('/heartbeat', async (req, res) => {
+router.post('/heartbeat', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
         const { deviceId, localIp, clientPort, platform } = req.body;
         const publicIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
@@ -107,7 +98,7 @@ router.post('/heartbeat', async (req, res) => {
         if (!deviceId || !localIp) return res.status(400).json({ success: false });
 
         const updatedDevice = await Device.findOneAndUpdate(
-            { deviceId },
+            { userId: req.user.id, deviceId },
             {
                 platform, localIp, publicIp, clientPort,
                 status: 'online', lastSeen: new Date()

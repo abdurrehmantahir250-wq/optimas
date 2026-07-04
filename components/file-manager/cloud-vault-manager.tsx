@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { Suspense, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
@@ -48,7 +48,25 @@ import type { FileEntry } from "@/lib/file-manager/types";
 
 type DialogKind = "rename" | "move" | "mkdir" | null;
 
+function CloudVaultManagerFallback() {
+  return (
+    <div className="flex h-screen bg-background">
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+        Loading cloud vault...
+      </div>
+    </div>
+  );
+}
+
 export function CloudVaultManager() {
+  return (
+    <Suspense fallback={<CloudVaultManagerFallback />}>
+      <CloudVaultManagerContent />
+    </Suspense>
+  );
+}
+
+function CloudVaultManagerContent() {
   const searchParams = useSearchParams();
   const { devices, resolveTarget } = useGateway();
   const paramDevice = searchParams.get("device");

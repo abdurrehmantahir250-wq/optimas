@@ -3,12 +3,16 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const AgentCredential = require('../models/AgentCredential');
+const Device = require('../models/Device');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'zenvora-dev-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
 const AUTH_COOKIE = 'auth_token';
 
 function getJwtSecret() {
+    if (!JWT_SECRET) {
+        throw new Error('JWT_SECRET is required.');
+    }
     return JWT_SECRET;
 }
 
@@ -18,20 +22,54 @@ function signUserToken(user) {
             sub: String(user._id),
             email: user.email,
             role: user.role,
-            name: user.name
+            name: user.name,
+            avatarUrl: user.avatarUrl || ''
         },
         getJwtSecret(),
         { expiresIn: JWT_EXPIRES }
     );
 }
 
-function verifyUserToken(token) {
+async function verifyUserToken(token) {
     if (!token) return null;
     try {
-        return jwt.verify(token, getJwtSecret());
+        const payload = jwt.verify(token, getJwtSecret());
+        if (!payload?.sub) return null;
+
+        const user = await User.findById(payload.sub).lean();
+        if (!user) return null;
+        if (user.authTokenHash) {
+            const matches = await bcrypt.compare(token, user.authTokenHash);
+            if (!matches) return null;
+        }
+
+        return {
+            ...payload,
+            avatarUrl: user.avatarUrl || ''
+        };
     } catch {
         return null;
     }
+}
+
+async function setUserAuthSession(user, token) {
+    if (!user?._id || !token) return null;
+    const tokenHash = await bcrypt.hash(token, 12);
+    await User.findByIdAndUpdate(user._id, {
+        authTokenHash: tokenHash,
+        lastLoginAt: new Date()
+    });
+    return tokenHash;
+}
+
+async function clearUserAuthSession(userId) {
+    if (!userId) return null;
+    await User.findByIdAndUpdate(userId, {
+        authTokenHash: '',
+        passwordResetOtpHash: '',
+        passwordResetOtpExpiresAt: null
+    });
+    return true;
 }
 
 function authCookieOptions() {
@@ -45,12 +83,42 @@ function authCookieOptions() {
     };
 }
 
-async function registerUser({ email, password, name }) {
+function generateSixDigitCode() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function generateUniqueUserField(fieldName) {
+    while (true) {
+        const candidate = generateSixDigitCode();
+        const existing = await User.findOne({ [fieldName]: candidate }).lean();
+        if (!existing) {
+            return candidate;
+        }
+    }
+}
+
+async function ensureUserPairingFields(user) {
+    if (!user?._id) return user;
+    const updates = {};
+    if (!user.pairingToken) {
+        updates.pairingToken = await generateUniqueUserField('pairingToken');
+    }
+    if (!user.pairingUserId) {
+        updates.pairingUserId = await generateUniqueUserField('pairingUserId');
+    }
+    if (Object.keys(updates).length === 0) {
+        return user;
+    }
+    await User.findByIdAndUpdate(user._id, updates);
+    return await User.findById(user._id).lean();
+}
+
+async function registerUser({ email, password, passwordHash, name, provider = 'local', googleId = '', avatarUrl = '' }) {
     const normalized = String(email || '').trim().toLowerCase();
     const plain = String(password || '');
 
-    if (!normalized || plain.length < 6) {
-        const error = new Error('Email and password (min 6 chars) are required.');
+    if (!normalized || (!plain && !passwordHash)) {
+        const error = new Error('Email and password are required.');
         error.status = 400;
         throw error;
     }
@@ -62,13 +130,21 @@ async function registerUser({ email, password, name }) {
         throw error;
     }
 
-    const passwordHash = await bcrypt.hash(plain, 12);
+    const passwordHashValue = passwordHash
+        ? String(passwordHash)
+        : await bcrypt.hash(plain, 12);
     const userCount = await User.countDocuments();
     const user = await User.create({
         email: normalized,
-        passwordHash,
+        passwordHash: passwordHashValue,
         name: String(name || normalized.split('@')[0] || 'User').trim(),
-        role: userCount === 0 ? 'admin' : 'user'
+        role: userCount === 0 ? 'admin' : 'user',
+        provider,
+        googleId: String(googleId || '').trim(),
+        avatarUrl: String(avatarUrl || '').trim(),
+        emailVerified: provider === 'google',
+        pairingToken: await generateUniqueUserField('pairingToken'),
+        pairingUserId: await generateUniqueUserField('pairingUserId')
     });
 
     return user;
@@ -83,6 +159,12 @@ async function loginUser({ email, password }) {
         throw error;
     }
 
+    if (!user.passwordHash) {
+        const error = new Error('This account requires Google sign-in.');
+        error.status = 401;
+        throw error;
+    }
+
     const ok = await bcrypt.compare(String(password || ''), user.passwordHash);
     if (!ok) {
         const error = new Error('Invalid email or password.');
@@ -90,7 +172,108 @@ async function loginUser({ email, password }) {
         throw error;
     }
 
+    return await ensureUserPairingFields(user);
+}
+
+async function upsertGoogleUser(profile) {
+    const normalized = String(profile.email || '').trim().toLowerCase();
+    const googleId = String(profile.id || profile.sub || '').trim();
+
+    if (!normalized || !googleId) {
+        const error = new Error('Google profile is incomplete.');
+        error.status = 400;
+        throw error;
+    }
+
+    let user = await User.findOne({ $or: [{ googleId }, { email: normalized }] });
+
+    if (!user) {
+        const passwordHashValue = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 12);
+        user = await User.create({
+            email: normalized,
+            passwordHash: passwordHashValue,
+            name: String(profile.name || profile.given_name || normalized.split('@')[0] || 'Google User').trim(),
+            provider: 'google',
+            googleId,
+            avatarUrl: String(profile.picture || '').trim(),
+            emailVerified: true,
+            role: 'user',
+            pairingToken: await generateUniqueUserField('pairingToken'),
+            pairingUserId: await generateUniqueUserField('pairingUserId')
+        });
+    } else {
+        const updates = {
+            provider: 'google',
+            googleId,
+            emailVerified: true,
+            avatarUrl: String(profile.picture || user.avatarUrl || '').trim()
+        };
+        if (!user.name && profile.name) updates.name = String(profile.name).trim();
+        await User.findByIdAndUpdate(user._id, updates);
+        user = await ensureUserPairingFields(await User.findById(user._id));
+    }
+
     return user;
+}
+
+async function requestPasswordReset(email) {
+    const normalized = String(email || '').trim().toLowerCase();
+    const user = await User.findOne({ email: normalized });
+    if (!user) return { success: true, message: 'If that email exists, a reset code was generated.' };
+
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otpHash = await bcrypt.hash(otp, 10);
+    await User.findByIdAndUpdate(user._id, {
+        passwordResetOtpHash: otpHash,
+        passwordResetOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    });
+
+    return { success: true, message: 'If that email exists, a reset code was generated.', otp };
+}
+
+async function verifyPasswordResetOtp(email, otp) {
+    const normalized = String(email || '').trim().toLowerCase();
+    const user = await User.findOne({ email: normalized });
+    if (!user?.passwordResetOtpHash || !user.passwordResetOtpExpiresAt) {
+        const error = new Error('Invalid or expired verification code.');
+        error.status = 401;
+        throw error;
+    }
+
+    if (new Date(user.passwordResetOtpExpiresAt) < new Date()) {
+        const error = new Error('Verification code expired.');
+        error.status = 401;
+        throw error;
+    }
+
+    const ok = await bcrypt.compare(String(otp || ''), user.passwordResetOtpHash);
+    if (!ok) {
+        const error = new Error('Invalid verification code.');
+        error.status = 401;
+        throw error;
+    }
+
+    await User.findByIdAndUpdate(user._id, {
+        passwordResetOtpHash: '',
+        passwordResetOtpExpiresAt: null
+    });
+
+    return user;
+}
+
+async function resetPassword(email, otp, newPassword) {
+    const normalized = String(email || '').trim().toLowerCase();
+    const user = await verifyPasswordResetOtp(normalized, otp);
+    const plain = String(newPassword || '').trim();
+    if (!plain || plain.length < 6) {
+        const error = new Error('Password must be at least 6 characters.');
+        error.status = 400;
+        throw error;
+    }
+
+    const passwordHash = await bcrypt.hash(plain, 12);
+    await User.findByIdAndUpdate(user._id, { passwordHash });
+    return true;
 }
 
 function generateAgentToken() {
@@ -121,7 +304,19 @@ async function createAgentCredential(userId, deviceId, label = 'My Agent') {
             userId,
             deviceId: cleanDeviceId,
             label: String(label || 'My Agent').trim(),
-            tokenHash
+            tokenHash,
+            lastConnectedAt: new Date()
+        },
+        { upsert: true, new: true }
+    );
+
+    await Device.findOneAndUpdate(
+        { deviceId: cleanDeviceId },
+        {
+            userId,
+            deviceId: cleanDeviceId,
+            status: 'offline',
+            lastSeen: new Date()
         },
         { upsert: true, new: true }
     );
@@ -138,14 +333,85 @@ async function verifyAgentToken(deviceId, agentToken) {
     await cred.save();
     return cred;
 }
+async function pairAgent(body) {
+    // 1. Request body se variables nikalen aur safe fallback lagayen
+    const pairingToken = String(body.pairingToken || '').trim();
+    const pairingUserId = String(body.pairingUserId || '').trim();
+    
+    // Agar deviceId nahi aaya toh hostname ko deviceId bana lo (Jaise Rust bhej raha hai)
+    const deviceId = String(body.deviceId || body.hostname || '').trim();
+    const hostname = String(body.hostname || 'Rust Agent').trim();
 
+    // 2. Strict Validation Check
+    if (!pairingToken || !pairingUserId || !deviceId) {
+        console.warn('--> [PAIRING] Missing required fields during pairing attempt');
+        const error = new Error('Missing pairing token, user ID, or device configuration.');
+        error.status = 400;
+        throw error;
+    }
+
+    // 3. Database me Clean Strings ke sath User dhoondo
+    const user = await User.findOne({ 
+        pairingToken: pairingToken, 
+        pairingUserId: pairingUserId 
+    });
+
+    if (!user) {
+        console.warn('--> [PAIRING] Match failed for pairing request');
+        const error = new Error('Invalid pairing token or user ID.');
+        error.status = 404;
+        throw error;
+    }
+
+    // 4. Secure Random Agent Token Generate karein
+    const agentToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = await bcrypt.hash(agentToken, 12);
+
+    // 5. Save or update credential mapping
+    await AgentCredential.findOneAndUpdate(
+        { deviceId },
+        {
+            userId: user._id,
+            deviceId,
+            label: hostname,
+            tokenHash,
+            lastConnectedAt: new Date()
+        },
+        { upsert: true, new: true }
+    );
+
+    // 6. Track state infrastructure inside Device model
+    await Device.findOneAndUpdate(
+        { deviceId },
+        {
+            userId: user._id,
+            deviceId,
+            status: 'offline',
+            lastSeen: new Date()
+        },
+        { upsert: true, new: true }
+    );
+
+    console.log(`--> [PAIRING] Success! Device ${deviceId} paired.`);
+
+    return {
+        agentToken,
+        gatewayUrl: process.env.ZENVORA_GATEWAY_URL || 'ws://localhost:3000/ws/gateway'
+    };
+}
 async function userOwnsDevice(userId, deviceId) {
     if (!userId || !deviceId) return false;
     const cred = await AgentCredential.findOne({
         userId,
         deviceId: String(deviceId).trim()
     }).lean();
-    return !!cred;
+    if (cred) return true;
+
+    const device = await Device.findOne({
+        userId,
+        deviceId: String(deviceId).trim()
+    }).lean();
+    return !!device;
 }
 
 async function listUserDevices(userId) {
@@ -173,11 +439,18 @@ module.exports = {
     authCookieOptions,
     signUserToken,
     verifyUserToken,
+    setUserAuthSession,
+    clearUserAuthSession,
     registerUser,
     loginUser,
+    upsertGoogleUser,
+    requestPasswordReset,
+    verifyPasswordResetOtp,
+    resetPassword,
     createAgentCredential,
     verifyAgentToken,
     userOwnsDevice,
     listUserDevices,
-    ensureDefaultAdmin
+    ensureDefaultAdmin,
+    pairAgent
 };

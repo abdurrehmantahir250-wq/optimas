@@ -104,13 +104,15 @@ export default function LogsPage() {
         if (msg.deviceId !== selectedDevice) return;
 
         if (msg.type === 'history_telemetry') {
-          if (msg.command === 'FETCH_BROWSER_HISTORY' && msg.data) {
-            setBrowserHistory(msg.data);
+          const entries = Array.isArray(msg.data) ? msg.data : Array.isArray(msg.entries) ? msg.entries : [];
+
+          if (msg.command === 'FETCH_BROWSER_HISTORY' && entries.length > 0) {
+            setBrowserHistory(entries);
             setLoading(false);
-          } else if (msg.command === 'FETCH_APP_HISTORY' && msg.data) {
-            setAppHistory(msg.data);
+          } else if (msg.command === 'FETCH_APP_HISTORY' && entries.length > 0) {
+            setAppHistory(entries);
             setLoading(false);
-          } else if (msg.command === 'FETCH_SYSTEM_NOTIFICATIONS' && msg.data) {
+          } else if (msg.command === 'FETCH_SYSTEM_NOTIFICATIONS') {
             setLoading(false);
           }
         }

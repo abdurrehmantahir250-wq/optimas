@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 const {
   registerUser,
   signUserToken,
+  setUserAuthSession,
   AUTH_COOKIE,
   authCookieOptions
 } = require("../../../../server/services/authService");
@@ -14,6 +15,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const user = await registerUser(body);
     const token = signUserToken(user);
+    await setUserAuthSession(user, token);
     const response = NextResponse.json({
       success: true,
       user: {
