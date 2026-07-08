@@ -228,6 +228,10 @@ async function requestPasswordReset(email) {
         passwordResetOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000)
     });
 
+    if (process.env.NODE_ENV === 'production') {
+        return { success: true, message: 'If that email exists, a reset code was generated.' };
+    }
+
     return { success: true, message: 'If that email exists, a reset code was generated.', otp };
 }
 
@@ -421,6 +425,13 @@ async function listUserDevices(userId) {
 async function ensureDefaultAdmin() {
     const count = await User.countDocuments();
     if (count > 0) return null;
+
+    if (process.env.NODE_ENV === 'production') {
+        if (!process.env.DEFAULT_ADMIN_EMAIL || !process.env.DEFAULT_ADMIN_PASSWORD) {
+            console.warn('=> Production bootstrap skipped: set DEFAULT_ADMIN_EMAIL and DEFAULT_ADMIN_PASSWORD to create the admin account.');
+            return null;
+        }
+    }
 
     const user = await registerUser({
         email: process.env.DEFAULT_ADMIN_EMAIL || 'admin@zenvora.local',

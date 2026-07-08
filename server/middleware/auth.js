@@ -42,7 +42,8 @@ function isPublicApiRoute(pathname = "") {
         "/api/auth/reset-password",
         "/api/auth/google",
         "/api/virtual-files/share",
-        '/api/auth/agent/pair'
+        '/api/auth/agent/pair',
+        '/api/agent/chat'
     ];
 
     return publicPaths.some(path =>

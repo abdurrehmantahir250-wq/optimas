@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
+ import { Skeleton } from "@/components/ui/skeleton";
 
 const PUBLIC_PATHS = ["/", "/login", "/register", "/forgot-password", "/verify-otp"];
 
@@ -51,8 +52,32 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
   if (!ready) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground font-mono text-xs">
-        Verifying session...
+      <div className="min-h-screen flex bg-background text-foreground">
+        <aside className="hidden xl:flex w-72 flex-col gap-4 border-r border-border bg-muted p-8">
+          <Skeleton className="h-12 w-40" />
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-48" />
+          <div className="space-y-3 pt-4">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-5/6" />
+            <Skeleton className="h-4 w-3/4" />
+          </div>
+        </aside>
+        <main className="flex-1 p-8">
+          <div className="space-y-6">
+            <Skeleton className="h-12 w-1/3" />
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+            <div className="space-y-4">
+              <Skeleton className="h-6 w-full" />
+              <Skeleton className="h-6 w-full" />
+              <Skeleton className="h-6 w-full" />
+            </div>
+          </div>
+        </main>
       </div>
     );
   }

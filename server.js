@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 const connectDB = require('./server/config/db');
+const { registerSecurityMiddleware } = require('./server/middleware/security');
 const { nextApp, nextHandler } = require('./server/config/next');
 const authRoutes = require('./server/routes/auth');
 const networkRoutes = require('./server/routes/network');
@@ -12,6 +13,7 @@ const virtualFileRoutes = require('./server/routes/virtual-files');
 const fileRoutes = require('./server/routes/files');
 const notificationRoutes = require('./server/routes/notifications');
 const logsRoutes = require('./server/routes/logs');
+const securityAuditRoutes = require('./server/routes/security-audit');
 const { initWebSocketGateway } = require('./server/sockets/gateway');
 const { lookupShareToken, serviceErrorResponse } = require('./server/services/virtualFileService');
 const { attachUser, requireAuthUnlessPublic } = require('./server/middleware/auth');
@@ -22,18 +24,33 @@ nextApp.prepare().then(async () => {
     await connectDB();
 
     const app = express();
+    app.disable('x-powered-by');
+    app.set('trust proxy', 1);
 
     const server = http.createServer(app);
     const nextUpgradeHandler = nextApp.getUpgradeHandler();
 
+    registerSecurityMiddleware(app);
     app.use(cookieParser());
+
+    const jsonBodyParser = express.json();
 
     initWebSocketGateway(server, nextUpgradeHandler);
 
     const { broadcastDeviceList } = require('./server/sockets/handler');
-    setInterval(() => broadcastDeviceList(), 5000);
+    setInterval(() => broadcastDeviceList(), 15000);
 
-    app.use('/api', express.json(), requireAuthUnlessPublic);
+    app.use('/api', (req, res, next) => {
+        if (req.path.startsWith('/agent')) {
+            return next();
+        }
+        return jsonBodyParser(req, res, next);
+    }, (req, res, next) => {
+        if (req.path.startsWith('/agent')) {
+            return next();
+        }
+        return requireAuthUnlessPublic(req, res, next);
+    });
     app.use('/api/auth', express.json(), authRoutes);
     app.use('/api/network', express.json(), networkRoutes);
     app.use('/api/media', express.json(), mediaRoutes);
@@ -41,6 +58,7 @@ nextApp.prepare().then(async () => {
     app.use('/api/files', express.json(), fileRoutes);
     app.use('/api/notifications', express.json(), notificationRoutes);
     app.use('/api/logs', express.json(), logsRoutes);
+    app.use('/api/security', express.json(), securityAuditRoutes);
 
     app.get('/api/virtual-files/share/:token', async (req, res) => {
         try {

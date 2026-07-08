@@ -38,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -252,6 +253,44 @@ export function FileManager() {
     }
     agent.openEntry(entry);
   };
+
+  if (agent.loading && !agent.items.length && !agent.cloudItems.length) {
+    return (
+      <div className="flex h-screen bg-background">
+        <aside className="hidden xl:flex w-64 flex-col gap-4 border-r border-border bg-muted p-6">
+          <Skeleton className="h-12 w-32" />
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-4 w-40" />
+          <div className="space-y-3 pt-4">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-5/6" />
+            <Skeleton className="h-4 w-4/6" />
+          </div>
+        </aside>
+        <main className="flex-1 p-6">
+          <div className="space-y-8">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-3">
+                <Skeleton className="h-10 w-64" />
+                <Skeleton className="h-4 w-48" />
+              </div>
+              <Skeleton className="h-10 w-28" />
+            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+            <div className="space-y-3">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background">

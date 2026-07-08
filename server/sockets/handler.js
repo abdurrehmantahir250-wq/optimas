@@ -107,7 +107,17 @@ async function getDeviceOptions(userId = null) {
     });
 }
 
+let lastBroadcastAt = 0;
+let lastBroadcastPayload = null;
+
 async function broadcastDeviceList() {
+    const now = Date.now();
+    if (now - lastBroadcastAt < 15000) {
+        return lastBroadcastPayload;
+    }
+
+    lastBroadcastAt = now;
+
     const dashboardSockets = Array.from(activeConnections.entries()).filter(([key, clientSocket]) => {
         return key.startsWith('DASHBOARD_') && clientSocket.readyState === 1;
     });
@@ -115,11 +125,15 @@ async function broadcastDeviceList() {
     for (const [key, clientSocket] of dashboardSockets) {
         const userId = clientSocket?.authContext?.kind === 'user' ? clientSocket.authContext.user?.id : null;
         const devices = await getDeviceOptions(userId);
-        clientSocket.send(JSON.stringify({
+        const payload = JSON.stringify({
             type: 'device_list_update',
             devices
-        }));
+        });
+        lastBroadcastPayload = payload;
+        clientSocket.send(payload);
     }
+
+    return lastBroadcastPayload;
 }
 
 function forwardPacketToDashboards(packet, activeConnections) {
@@ -130,11 +144,38 @@ function forwardPacketToDashboards(packet, activeConnections) {
     });
 }
 
+function getShellResponsePayload(packet) {
+    if (!packet || typeof packet !== 'object') return null;
+
+    if (packet.shell && typeof packet.shell === 'object') {
+        return packet.shell;
+    }
+
+    if (typeof packet.stdout === 'string' || typeof packet.stderr === 'string') {
+        return {
+            command: typeof packet.command === 'string' ? packet.command : '',
+            exit_code: typeof packet.exit_code === 'number' ? packet.exit_code : null,
+            stdout: typeof packet.stdout === 'string' ? packet.stdout : '',
+            stderr: typeof packet.stderr === 'string' ? packet.stderr : '',
+            timed_out: typeof packet.timed_out === 'boolean' ? packet.timed_out : false,
+        };
+    }
+
+    return null;
+}
+
 function isShellResponsePacket(packet) {
+    const shellPayload = getShellResponsePayload(packet);
     return Boolean(
         packet && (
             packet.type === 'shell_output' ||
-            (packet.type === 'sys_ack' && packet.shell && typeof packet.shell === 'object')
+            packet.type === 'sys_error' ||
+            (packet.type === 'sys_ack' && (
+                shellPayload ||
+                packet.action === 'SHELL_EXECUTE' ||
+                packet.action === 'SHELL_EXECUTE_RAW' ||
+                typeof packet.message === 'string'
+            ))
         )
     );
 }
@@ -299,6 +340,10 @@ async function handleSocketMessage(ws, message) {
         }
 
         if (isShellResponsePacket(packet) && (ws.connectionKey?.startsWith('AGENT_') || ws.connectionKey?.startsWith('DEVICE_'))) {
+            const shellPayload = getShellResponsePayload(packet);
+            if (shellPayload) {
+                packet.shell = shellPayload;
+            }
             forwardPacketToDashboards(packet, activeConnections);
             return;
         }

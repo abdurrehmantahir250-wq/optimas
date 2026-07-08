@@ -1,8 +1,12 @@
 "use client";
 
-export function ZenvoraLogo() {
+type ZenvoraLogoProps = {
+  className?: string;
+};
+
+export function ZenvoraLogo({ className }: ZenvoraLogoProps) {
   return (
-    <div className="relative w-12 h-12 flex items-center justify-center">
+    <div className={`relative flex items-center justify-center ${className ?? "w-12 h-12"}`}>
       {/* Animated WiFi rings */}
       <svg
         className="w-full h-full"

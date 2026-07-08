@@ -380,3 +380,8 @@
 .scrool::-webkit-scrollbar {
   display: none;
 }
+.mwe0{
+    width: 60% !important;
+    margin: 0 auto !important;
+
+}

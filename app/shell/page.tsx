@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Trash2, MessageCircle, MonitorSmartphone } from "lucide-react";
+import { ArrowLeft, Trash2, MonitorSmartphone } from "lucide-react";
 import { useGateway } from "@/hooks/use-gateway";
+import { AgentChatPanel } from "@/components/shell/agent-chat-panel";
 
 // Custom type for our terminal history lines
 type TerminalLine = {
@@ -21,6 +22,7 @@ export default function ShellPage() {
   
   const [selectedDevice, setSelectedDevice] = useState("");
   const [status, setStatus] = useState("Secure terminal ready");
+  const [isExecuting, setIsExecuting] = useState(false);
   const [showDevicePicker, setShowDevicePicker] = useState(false);
   const [input, setInput] = useState("");
   
@@ -52,14 +54,51 @@ export default function ShellPage() {
 
   // Handle incoming gateway responses
   useEffect(() => {
+    const handleTerminalCommand = (event: Event) => {
+      const detail = (event as CustomEvent<{ command?: string; target?: string }>).detail;
+      const command = detail?.command?.trim();
+      if (!command) return;
+
+      const target = selectedDeviceRef.current || resolveTarget();
+      if (!target) {
+        setHistory((prev) => [
+          ...prev,
+          { id: Math.random().toString(), text: "[error] No device selected", color: "#dc2626" },
+        ]);
+        return;
+      }
+
+      setHistory((prev) => [
+        ...prev,
+        { id: Math.random().toString(), text: command, isCommand: true },
+      ]);
+      dispatch("SHELL_EXECUTE", { command }, target);
+      setStatus(`Executing on ${target}`);
+    };
+
+    window.addEventListener("zenvora:terminal-command", handleTerminalCommand as EventListener);
+    return () => {
+      window.removeEventListener("zenvora:terminal-command", handleTerminalCommand as EventListener);
+    };
+  }, [dispatch, resolveTarget]);
+
+  useEffect(() => {
     return subscribe((event) => {
       if (event.type !== "json") return;
       const packet = event.packet as Record<string, unknown>;
+      console.debug("[SHELL] gateway packet", packet);
       const isShellResponse =
         packet.type === "shell_output" ||
-        (packet.type === "sys_ack" && Boolean(packet.shell));
+        packet.type === "sys_error" ||
+        (packet.type === "sys_ack" && (
+          Boolean(packet.shell) ||
+          typeof packet.stdout === "string" ||
+          typeof packet.stderr === "string" ||
+          (typeof packet.action === "string" && (packet.action === "SHELL_EXECUTE" || packet.action === "SHELL_EXECUTE_RAW"))
+        ));
 
       if (!isShellResponse) return;
+      setIsExecuting(false);
 
       if (packet.type === "sys_error") {
         const message = typeof packet.message === "string" ? packet.message : "Command failed";
@@ -72,13 +111,24 @@ export default function ShellPage() {
       }
 
       const shellPayload = (packet.shell as Record<string, unknown> | undefined) ?? {};
-      const stdout = typeof shellPayload.stdout === "string" ? shellPayload.stdout : "";
-      const stderr = typeof shellPayload.stderr === "string" ? shellPayload.stderr : "";
+      const stdout =
+        typeof shellPayload.stdout === "string"
+          ? shellPayload.stdout
+          : typeof packet.stdout === "string"
+            ? packet.stdout
+            : "";
+      const stderr =
+        typeof shellPayload.stderr === "string"
+          ? shellPayload.stderr
+          : typeof packet.stderr === "string"
+            ? packet.stderr
+            : "";
       const combined = [stdout, stderr].filter(Boolean).join("\n");
-      
+      const message = combined || String(packet.message || "[no output]");
+
       setHistory((prev) => [
         ...prev,
-        { id: Math.random().toString(), text: combined || "[no output]", color: "#0f172a" }, // foreground
+        { id: Math.random().toString(), text: message, color: "#0f172a" }, // foreground
       ]);
       setStatus(String(packet.message || "Command completed"));
     });
@@ -96,26 +146,31 @@ export default function ShellPage() {
         { id: Math.random().toString(), text: command, isCommand: true }
       ]);
 
-      if (command) {
-        const target = selectedDeviceRef.current || resolveTarget();
-        if (!target) {
-          setHistory((prev) => [
-            ...prev,
-            { id: Math.random().toString(), text: "[error] No device selected", color: "#dc2626" },
-          ]);
-          return;
-        }
-
-        const result = dispatch("SHELL_EXECUTE", { command }, target);
-        if (!result.ok) {
-          setHistory((prev) => [
-            ...prev,
-            { id: Math.random().toString(), text: "[error] Gateway offline or device unavailable", color: "#dc2626" },
-          ]);
-          return;
-        }
-        setStatus(`Executed on ${target}`);
+      if (!command) {
+        return;
       }
+
+      const target = selectedDeviceRef.current || resolveTarget();
+      if (!target) {
+        setHistory((prev) => [
+          ...prev,
+          { id: Math.random().toString(), text: "[error] No device selected", color: "#dc2626" },
+        ]);
+        setIsExecuting(false);
+        return;
+      }
+
+      setIsExecuting(true);
+      const result = dispatch("SHELL_EXECUTE", { command }, target);
+      if (!result.ok) {
+        setIsExecuting(false);
+        setHistory((prev) => [
+          ...prev,
+          { id: Math.random().toString(), text: "[error] Gateway offline or device unavailable", color: "#dc2626" },
+        ]);
+        return;
+      }
+      setStatus(`Executing on ${target}`);
     }
   };
 
@@ -140,12 +195,15 @@ export default function ShellPage() {
   };
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#f5f7fb] text-slate-800">
-      <div className="flex flex-1 flex-col p-4">
+    <div className="flex h-screen w-screen flex-col overfw-hidden bg-[#f5f7fb] text-slate-800">
+      <div className="flex flex-1 flex-col p4">
         <div className="relative flex flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_10px_40px_rgba(15,23,42,0.06)]">
           
           {/* Header Controls */}
-          <div className="absolute right-2 top-2 z-10 flex items-center gap-1.5 shadow-sm backdrop-blur">
+          <div className="fixed right-2 top-2 z-10 flex items-center gap-1.5 shadow-sm backdrop-blur">
+            <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${isExecuting ? "bg-emerald-100 text-emerald-900" : "bg-slate-100 text-slate-700"}`}>
+              {isExecuting ? "Running command…" : status}
+            </span>
             <button
               onClick={() => router.push("/dashboard")}
               className="flex h-7 w-7 items-center justify-center rounded-sm text-slate-600 transition hover:bg-slate-100"
@@ -189,16 +247,11 @@ export default function ShellPage() {
             >
               <Trash2 className="h-4 w-4" />
             </button>
-            <button
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-slate-600 transition hover:bg-slate-100"
-              aria-label="Chat"
-            >
-              <MessageCircle className="h-4 w-4" />
-            </button>
+            <AgentChatPanel />
           </div>
 
           {/* Simple Terminal Render */}
-          <div className="w-full overflow-hidden rounded-xl bg-[#f8fafc] p-2">
+          <div className="w-full overflow-hidden rounded-xl bg-[#f8fafc] -2">
             <div 
               className="h-full w-full overflow-y-auto rounded-lg border border-slate-200 bg-[#f8fafc] p-4 font-mono text-[14px] leading-[1.45] text-[#0f172a] cursor-text"
               onClick={focusInput}
