@@ -12,6 +12,7 @@ import {
 import { Suspense, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
+import { gatewayClient, type DeviceRecord } from "@/lib/gateway-client";
 
 // Dynamically import Leaflet Map and Three.js Chart to avoid SSR issues
 const DeviceMap = dynamic(() => import("@/components/DeviceMap"), {
@@ -50,32 +51,7 @@ const DeviceUserDataThreeChart = dynamic(() => import("@/components/DeviceUserDa
   )
 });
 
-// Interfaces
-interface Device {
-  deviceId: string;
-  platform: "windows" | "mac" | "android" | "linux" | "unknown";
-  status: "online" | "offline";
-  clientPort: number;
-  localIp: string;
-  publicIp: string;
-  battery: number | null;
-  storage: number | null;
-  network: string;
-  latitude: number | null;
-  longitude: number | null;
-  country: string;
-  region: string;
-  city: string;
-  isp: string;
-  timezone: string;
-  hostname: string;
-  username: string;
-  osVersion: string;
-  architecture: string;
-  cpu: string;
-  ram: number | null;
-  lastSeen: string;
-}
+type Device = DeviceRecord;
 
 interface TopApp {
   _id: string; // appName
@@ -122,13 +98,13 @@ function DevicesPageContent() {
   const [isPending, startTransition] = useTransition();
 
   // State Management
-  const [devices, setDevices] = useState<Device[]>([]);
+  const [devices, setDevices] = useState<Device[]>(() => gatewayClient.getFullDevices());
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"info" | "charts" | "user-charts">("info");
-  const [loadingDevices, setLoadingDevices] = useState(true);
+  const [loadingDevices, setLoadingDevices] = useState(() => !gatewayClient.hasDeviceCache());
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const [mapReady, setMapReady] = useState(false);
 
   // Detail States for Selected Device
   const [topApps, setTopApps] = useState<TopApp[]>([]);
@@ -141,37 +117,35 @@ function DevicesPageContent() {
   const [showDomainsModal, setShowDomainsModal] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
 
-  // Fetch registered devices from MongoDB via the custom endpoint
-  const fetchDevices = async (shouldSelectFirst = true) => {
-  try {
-    setLoadingDevices(true);
+  const applyDeviceSelection = (nextDevices: Device[], shouldSelectFirst = true) => {
+    setDevices(nextDevices);
 
-    const res = await fetch("/api/network/devices");
-    if (!res.ok) throw new Error("Failed to fetch devices");
-
-    const data = await res.json();
-
-    if (data.success && Array.isArray(data.devices)) {
-      setDevices(data.devices);
-
-      const paramId = searchParams.get("deviceId");
-
-      if (
-        paramId &&
-        data.devices.some((d: Device) => d.deviceId === paramId)
-      ) {
-        setSelectedDeviceId(paramId);
-      } else if (shouldSelectFirst && data.devices.length > 0) {
-        setSelectedDeviceId(data.devices[0].deviceId);
-      }
+    const paramId = searchParams.get("deviceId");
+    if (paramId && nextDevices.some((d) => d.deviceId === paramId)) {
+      setSelectedDeviceId(paramId);
+    } else if (shouldSelectFirst && nextDevices.length > 0) {
+      setSelectedDeviceId(nextDevices[0].deviceId);
     }
-  } catch (err) {
-    console.error(err);
-  } finally {
-    setLoadingDevices(false);
-    setInitialLoading(false); // <-- important
-  }
-};
+  };
+
+  const fetchDevices = async (shouldSelectFirst = true, force = false) => {
+    const hasCache = devices.length > 0 || gatewayClient.hasDeviceCache();
+    if (!hasCache) {
+      setLoadingDevices(true);
+    }
+
+    try {
+      await gatewayClient.refreshDevices({ force });
+      const nextDevices = gatewayClient.getFullDevices();
+      if (nextDevices.length > 0) {
+        applyDeviceSelection(nextDevices, shouldSelectFirst);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingDevices(false);
+    }
+  };
 const deviceOptions = devices.map((device) => ({
   value: device.deviceId,
   label: `${device.hostname || device.deviceId.substring(0, 8)} (${device.status})`,
@@ -234,33 +208,24 @@ function DevicesPageSkeleton() {
     if (!deviceId) return;
     setLoadingDetails(true);
     try {
-      // 1. Fetch top apps
-      const appsRes = await fetch(`/api/logs/top-apps?deviceId=${deviceId}&limit=20`);
-      if (appsRes.ok) {
-        const appsData = await appsRes.json();
-        setTopApps(appsData.apps || []);
-      }
+      const [appsRes, domainsRes, notifRes, logsRes] = await Promise.all([
+        fetch(`/api/logs/top-apps?deviceId=${deviceId}&limit=20`, { credentials: "include" }),
+        fetch(`/api/logs/top-domains?deviceId=${deviceId}&limit=20`, { credentials: "include" }),
+        fetch(`/api/notifications?deviceId=${deviceId}&limit=5`, { credentials: "include" }),
+        fetch(`/api/logs/activity?deviceId=${deviceId}&limit=5`, { credentials: "include" }),
+      ]);
 
-      // 2. Fetch top visited domains
-      const domainsRes = await fetch(`/api/logs/top-domains?deviceId=${deviceId}&limit=20`);
-      if (domainsRes.ok) {
-        const domainsData = await domainsRes.json();
-        setTopDomains(domainsData.domains || []);
-      }
+      const [appsData, domainsData, notifData, logsData] = await Promise.all([
+        appsRes.ok ? appsRes.json() : null,
+        domainsRes.ok ? domainsRes.json() : null,
+        notifRes.ok ? notifRes.json() : null,
+        logsRes.ok ? logsRes.json() : null,
+      ]);
 
-      // 3. Fetch recent notifications
-      const notifRes = await fetch(`/api/notifications?deviceId=${deviceId}&limit=5`);
-      if (notifRes.ok) {
-        const notifData = await notifRes.json();
-        setNotifications(notifData.notifications || []);
-      }
-
-      // 4. Fetch recent activity logs
-      const logsRes = await fetch(`/api/logs/activity?deviceId=${deviceId}&limit=5`);
-      if (logsRes.ok) {
-        const logsData = await logsRes.json();
-        setActivityLogs(logsData.logs || []);
-      }
+      setTopApps(appsData?.apps || []);
+      setTopDomains(domainsData?.domains || []);
+      setNotifications(notifData?.notifications || []);
+      setActivityLogs(logsData?.logs || []);
     } catch (err) {
       console.error("Error fetching device details:", err);
     } finally {
@@ -268,9 +233,13 @@ function DevicesPageSkeleton() {
     }
   };
 
-  // Initial load
+  // Initial load — show cached devices instantly, refresh in background
   useEffect(() => {
-    fetchDevices();
+    const cached = gatewayClient.getFullDevices();
+    if (cached.length > 0) {
+      applyDeviceSelection(cached, true);
+    }
+    void fetchDevices(true);
   }, []);
 
   // Update selected device if URL query changes
@@ -281,17 +250,28 @@ function DevicesPageSkeleton() {
     }
   }, [searchParams, devices]);
 
-  // Load details whenever selected device changes
   useEffect(() => {
     if (selectedDeviceId) {
       fetchDeviceDetails(selectedDeviceId);
     }
   }, [selectedDeviceId]);
 
-  // Trigger manual refresh of all metrics
+  useEffect(() => {
+    if (activeTab !== "info" || !selectedDeviceId) {
+      setMapReady(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => setMapReady(true), 120);
+    return () => {
+      window.clearTimeout(timer);
+      setMapReady(false);
+    };
+  }, [activeTab, selectedDeviceId]);
+
   const handleRefresh = async () => {
     setRefreshing(true);
-    await fetchDevices(false);
+    await fetchDevices(false, true);
     if (selectedDeviceId) {
       await fetchDeviceDetails(selectedDeviceId);
     }
@@ -672,13 +652,22 @@ if (loadingDevices && devices.length === 0) {
                             : ""}
                         </span>
                       </div>
-                      <DeviceMap
-                        latitude={selectedDevice.latitude}
-                        longitude={selectedDevice.longitude}
-                        cityName={selectedDevice.city}
-                        countryName={selectedDevice.country}
-                        deviceId={selectedDevice.deviceId}
-                      />
+                      {mapReady ? (
+                        <DeviceMap
+                          latitude={selectedDevice.latitude}
+                          longitude={selectedDevice.longitude}
+                          cityName={selectedDevice.city}
+                          countryName={selectedDevice.country}
+                          deviceId={selectedDevice.deviceId}
+                        />
+                      ) : (
+                        <div className="w-full h-[320px] rounded-2xl bg-card border border-border flex items-center justify-center">
+                          <div className="flex flex-col items-center gap-2">
+                            <RefreshCw className="w-6 h-6 animate-spin text-emerald-500" />
+                            <span className="text-xs text-muted-foreground font-mono">Preparing map...</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 

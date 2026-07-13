@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -10,13 +10,32 @@ import { toast } from "sonner";
 import { AuthLayout } from "@/components/auth-layout";
 import { ShieldCheck } from "lucide-react";
 
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  "google-auth-failed": "Google sign-in failed. Please try again.",
+  "google-not-configured": "Google OAuth is not configured on this server.",
+  "google-state-mismatch": "Google sign-in session expired. Please try again.",
+  "google-token-exchange-failed": "Google token exchange failed. Check OAuth redirect URI settings.",
+  "database-unavailable":
+    "Database is not connected. Check MONGODB_URI in .env and ensure MongoDB Atlas allows your IP.",
+  "auth-not-configured": "Server auth is not configured. Set JWT_SECRET in .env.",
+};
+
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") || "/dashboard";
+  const authError = searchParams.get("error");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!authError) return;
+    const message =
+      AUTH_ERROR_MESSAGES[authError] ||
+      `Sign-in failed (${authError}). Please try again.`;
+    toast.error(message, { duration: 8000 });
+  }, [authError]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -52,6 +71,12 @@ export default function LoginForm() {
       subtitle="Identify yourself to enter the Zenvora central control console."
     >
       <div className="space-y-6">
+        {authError && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            {AUTH_ERROR_MESSAGES[authError] ||
+              `Sign-in failed (${authError}). Please try again.`}
+          </div>
+        )}
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email" className="text-xs uppercase font-mono tracking-wider text-muted-foreground">

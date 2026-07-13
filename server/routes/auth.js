@@ -13,7 +13,7 @@ const {
     authCookieOptions,
     pairAgent
 } = require('../services/authService');
-const { attachUser } = require('../middleware/auth');
+const { attachUser, extractToken } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -83,13 +83,13 @@ router.post('/login', async (req, res) => {
     }
 });
 
-router.post('/logout', attachUser, async (req, res) => {
-    const token = req.authToken || req.cookies?.[AUTH_COOKIE];
+router.post('/logout', async (req, res) => {
+    const token = extractToken(req);
     const payload = await verifyUserToken(token);
     if (payload?.sub) {
         await clearUserAuthSession(payload.sub);
     }
-    res.clearCookie(AUTH_COOKIE, { path: '/' });
+    res.clearCookie(AUTH_COOKIE, { ...authCookieOptions(), maxAge: 0 });
     return res.status(200).json({ success: true });
 });
 

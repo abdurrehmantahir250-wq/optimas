@@ -1,14 +1,11 @@
 const mongoose = require('mongoose');
 const VirtualFile = require('../../models/VirtualFile');
 const { BaseVirtualFileRepository } = require('../BaseVirtualFileRepository');
+const { connectMongoose } = require('./connection');
 
 class MongoVirtualFileRepository extends BaseVirtualFileRepository {
     async connect() {
-        if (mongoose.connection.readyState === 1) return;
-        if (!process.env.MONGODB_URI) {
-            throw new Error('MONGODB_URI is missing. Set it or choose another DATABASE_PROVIDER.');
-        }
-        await mongoose.connect(process.env.MONGODB_URI);
+        await connectMongoose();
     }
 
     buildActiveFilter(includeDeleted = false) {

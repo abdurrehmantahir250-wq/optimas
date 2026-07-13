@@ -54,7 +54,14 @@ const SCREEN_ACTION_TOKENS = [
     'SET_SYSTEM_VOLUME',
     'SEND_TEXT_INPUT',
     'LOCK_SCREEN',
-    'OPEN_SETTINGS'
+    'OPEN_SETTINGS',
+    'SET_SCREEN_QUALITY',
+    'REMOTE_MOUSE_MOVE',
+    'REMOTE_MOUSE_DOWN',
+    'REMOTE_MOUSE_UP',
+    'REMOTE_MOUSE_WHEEL',
+    'REMOTE_KEY_DOWN',
+    'REMOTE_KEY_UP'
 ];
 
 const FRAME_STREAM = 0x01;
@@ -295,6 +302,14 @@ async function handleSocketMessage(ws, message) {
 
     try {
         const packet = JSON.parse(raw.toString('utf8'));
+
+        if (packet.type === 'dashboard_ping' || packet.type === 'agent_ping') {
+            ws.send(JSON.stringify({
+                type: packet.type === 'agent_ping' ? 'agent_pong' : 'dashboard_pong',
+                status: 'ok'
+            }));
+            return;
+        }
 
         if (packet.type === 'register_channel') {
             const role = String(packet.role || 'AGENT').toUpperCase();

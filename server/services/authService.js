@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const AgentCredential = require('../models/AgentCredential');
 const Device = require('../models/Device');
+const { ensureMongooseConnected } = require('../db/mongo/connection');
 
 const JWT_SECRET = process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '7d';
@@ -50,6 +51,10 @@ async function verifyUserToken(token) {
     } catch {
         return null;
     }
+}
+
+async function ensureAuthDatabase() {
+    await ensureMongooseConnected();
 }
 
 async function setUserAuthSession(user, token) {
@@ -338,41 +343,148 @@ async function verifyAgentToken(deviceId, agentToken) {
     return cred;
 }
 async function pairAgent(body) {
-    // 1. Request body se variables nikalen aur safe fallback lagayen
+    console.log("\n==================================================");
+    console.log("PAIR REQUEST START");
+    console.log("==================================================");
+
+    console.log("\n[1] Raw Request Body:");
+    console.dir(body, { depth: null });
+
     const pairingToken = String(body.pairingToken || '').trim();
     const pairingUserId = String(body.pairingUserId || '').trim();
-    
-    // Agar deviceId nahi aaya toh hostname ko deviceId bana lo (Jaise Rust bhej raha hai)
     const deviceId = String(body.deviceId || body.hostname || '').trim();
     const hostname = String(body.hostname || 'Rust Agent').trim();
 
-    // 2. Strict Validation Check
+    console.log("\n[2] Parsed Values:");
+    console.log({
+        pairingToken,
+        pairingUserId,
+        deviceId,
+        hostname,
+        pairingTokenType: typeof pairingToken,
+        pairingUserIdType: typeof pairingUserId
+    });
+
     if (!pairingToken || !pairingUserId || !deviceId) {
-        console.warn('--> [PAIRING] Missing required fields during pairing attempt');
+        console.log("\n[ERROR] Missing Required Fields");
+        console.log({
+            pairingToken,
+            pairingUserId,
+            deviceId
+        });
+
         const error = new Error('Missing pairing token, user ID, or device configuration.');
         error.status = 400;
         throw error;
     }
 
-    // 3. Database me Clean Strings ke sath User dhoondo
-    const user = await User.findOne({ 
-        pairingToken: pairingToken, 
-        pairingUserId: pairingUserId 
+    console.log("\n[3] Fetching users from database...");
+
+    const allUsers = await User.find(
+        {},
+        {
+            email: 1,
+            pairingToken: 1,
+            pairingUserId: 1
+        }
+    ).lean();
+
+    console.log("\n========== USERS IN DATABASE ==========");
+
+    if (allUsers.length === 0) {
+        console.log("NO USERS FOUND");
+    }
+
+    allUsers.forEach((u, index) => {
+        console.log(`\nUser ${index + 1}`);
+        console.log("----------------------");
+        console.log("_id:", u._id);
+        console.log("email:", u.email);
+
+        console.log(
+            "pairingToken:",
+            u.pairingToken,
+            "| type:",
+            typeof u.pairingToken
+        );
+
+        console.log(
+            "pairingUserId:",
+            u.pairingUserId,
+            "| type:",
+            typeof u.pairingUserId
+        );
     });
 
+    console.log("\n========================================");
+
+    console.log("\n[4] Query (String)");
+
+    const stringQuery = {
+        pairingToken,
+        pairingUserId
+    };
+
+    console.log(stringQuery);
+
+    let user = await User.findOne(stringQuery);
+
+    console.log("\nResult (String Query):");
+    console.dir(user);
+
+    console.log("\n[5] Query (Number)");
+
+    const numberQuery = {
+        pairingToken: Number(pairingToken),
+        pairingUserId: Number(pairingUserId)
+    };
+
+    console.log(numberQuery);
+
+    const numericUser = await User.findOne(numberQuery);
+
+    console.log("\nResult (Number Query):");
+    console.dir(numericUser);
+
+    if (!user && numericUser) {
+        console.log("\n========================================");
+        console.log("FOUND USING NUMBER QUERY");
+        console.log("Database stores numeric values.");
+        console.log("========================================");
+
+        user = numericUser;
+    }
+
     if (!user) {
-        console.warn('--> [PAIRING] Match failed for pairing request');
-        const error = new Error('Invalid pairing token or user ID.');
+        console.log("\n========================================");
+        console.log("NO MATCH FOUND");
+        console.log("========================================");
+
+        console.log("Incoming:");
+        console.log({
+            pairingToken,
+            pairingUserId
+        });
+
+        console.log("\nDatabase:");
+        console.dir(allUsers, { depth: null });
+
+        const error = new Error("Invalid pairing token or user ID.");
         error.status = 404;
         throw error;
     }
 
-    // 4. Secure Random Agent Token Generate karein
-    const agentToken = crypto.randomBytes(32).toString('hex');
+    console.log("\n========================================");
+    console.log("MATCHED USER");
+    console.dir(user, { depth: null });
+    console.log("========================================");
+
+    const agentToken = crypto.randomBytes(32).toString("hex");
     const tokenHash = await bcrypt.hash(agentToken, 12);
 
-    // 5. Save or update credential mapping
-    await AgentCredential.findOneAndUpdate(
+    console.log("\n[6] Saving AgentCredential...");
+
+    const credential = await AgentCredential.findOneAndUpdate(
         { deviceId },
         {
             userId: user._id,
@@ -381,26 +493,43 @@ async function pairAgent(body) {
             tokenHash,
             lastConnectedAt: new Date()
         },
-        { upsert: true, new: true }
+        {
+            upsert: true,
+            new: true
+        }
     );
 
-    // 6. Track state infrastructure inside Device model
-    await Device.findOneAndUpdate(
+    console.dir(credential, { depth: null });
+
+    console.log("\n[7] Saving Device...");
+
+    const device = await Device.findOneAndUpdate(
         { deviceId },
         {
             userId: user._id,
             deviceId,
-            status: 'offline',
+            status: "offline",
             lastSeen: new Date()
         },
-        { upsert: true, new: true }
+        {
+            upsert: true,
+            new: true
+        }
     );
 
-    console.log(`--> [PAIRING] Success! Device ${deviceId} paired.`);
+    console.dir(device, { depth: null });
+
+    console.log("\n========================================");
+    console.log("PAIR SUCCESS");
+    console.log("Device:", deviceId);
+    console.log("Hostname:", hostname);
+    console.log("========================================\n");
 
     return {
         agentToken,
-        gatewayUrl: process.env.ZENVORA_GATEWAY_URL || 'ws://localhost:3000/ws/gateway'
+        gatewayUrl:
+            process.env.ZENVORA_GATEWAY_URL ||
+            "ws://optimas-production.up.railway.app/ws/gateway"
     };
 }
 async function userOwnsDevice(userId, deviceId) {
@@ -452,6 +581,7 @@ module.exports = {
     verifyUserToken,
     setUserAuthSession,
     clearUserAuthSession,
+    ensureAuthDatabase,
     registerUser,
     loginUser,
     upsertGoogleUser,

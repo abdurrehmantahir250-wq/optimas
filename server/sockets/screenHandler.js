@@ -61,12 +61,15 @@ function handleScreenCommand(ws, packet, activeConnections) {
         } else if (
             action === 'LIST_DISPLAYS'
             || action === 'PROBE_DISPLAYS'
-            || action === 'START_SCREEN_STREAM'
             || action === 'STOP_SCREEN_STREAM'
             || action === 'LOCK_SCREEN'
             || action === 'OPEN_SETTINGS'
         ) {
             outboundPacket.payload = {};
+        } else if (action === 'START_SCREEN_STREAM' || action === 'SET_SCREEN_QUALITY') {
+            outboundPacket.payload = {
+                quality: String(payload?.quality ?? 'medium'),
+            };
         } else if (action === 'SET_DISPLAY_BRIGHTNESS' || action === 'SET_SYSTEM_VOLUME') {
             outboundPacket.payload = {
                 degree_value: Number(payload?.value ?? payload?.degree_value ?? 50)
@@ -74,6 +77,24 @@ function handleScreenCommand(ws, packet, activeConnections) {
         } else if (action === 'SEND_TEXT_INPUT') {
             outboundPacket.payload = {
                 text: String(payload?.text ?? '')
+            };
+        } else if (
+            action === 'REMOTE_MOUSE_MOVE'
+            || action === 'REMOTE_MOUSE_DOWN'
+            || action === 'REMOTE_MOUSE_UP'
+            || action === 'REMOTE_MOUSE_WHEEL'
+            || action === 'REMOTE_KEY_DOWN'
+            || action === 'REMOTE_KEY_UP'
+        ) {
+            outboundPacket.payload = {
+                x: Number(payload?.x ?? 0),
+                y: Number(payload?.y ?? 0),
+                button: payload?.button ?? 'left',
+                delta: Number(payload?.delta ?? 0),
+                code: payload?.code ?? '',
+                text: payload?.text ?? '',
+                screen_width: Number(payload?.screen_width ?? 1920),
+                screen_height: Number(payload?.screen_height ?? 1080),
             };
         } else if (action === 'CAPTURE_SCREENSHOT' || action === 'FETCH_SCREEN_TELEMETRY') {
             outboundPacket.payload = {

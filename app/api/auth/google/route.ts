@@ -8,7 +8,8 @@ const {
   signUserToken,
   setUserAuthSession,
   AUTH_COOKIE,
-  authCookieOptions
+  authCookieOptions,
+  ensureAuthDatabase
 } = require("../../../../server/services/authService");
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -108,8 +109,11 @@ export async function GET(request: NextRequest) {
     const sub = profile.id;
 
     if (!email || !sub) {
+      console.error("[GOOGLE AUTH] Incomplete profile:", profile);
       return redirectToLogin("google-auth-failed");
     }
+
+    await ensureAuthDatabase();
 
     const user = await upsertGoogleUser({
       email,
@@ -127,9 +131,20 @@ export async function GET(request: NextRequest) {
     clearStateCookie(response);
     return response;
   } catch (callbackError) {
+    console.error("[GOOGLE AUTH] Callback failed:", callbackError);
     const message = callbackError instanceof Error ? callbackError.message : "google-auth-failed";
     if (message.includes("JWT_SECRET is required")) {
       return redirectToLogin("auth-not-configured");
+    }
+    if (
+      message.includes("MONGODB_URI") ||
+      message.includes("Database") ||
+      message.includes("buffering timed out") ||
+      message.includes("Server selection timed out") ||
+      message.includes("ECONNREFUSED") ||
+      message.includes("ENOTFOUND")
+    ) {
+      return redirectToLogin("database-unavailable");
     }
     return redirectToLogin("google-auth-failed");
   }

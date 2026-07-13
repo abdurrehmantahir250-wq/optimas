@@ -38,13 +38,13 @@ function isPublicApiRoute(pathname = "") {
     const publicPaths = [
         "/api/auth/login",
         "/api/auth/register",
+        "/api/auth/logout",
         "/api/auth/forgot-password",
         "/api/auth/reset-password",
         "/api/auth/google",
         "/api/virtual-files/share",
         '/api/auth/agent/pair',
-        '/api/agent/chat',
-        '/dashboard'
+        '/api/agent/chat'
     ];
 
     return publicPaths.some(path =>

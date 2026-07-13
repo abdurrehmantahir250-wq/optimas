@@ -2,6 +2,7 @@
 
 import { Smartphone, Shield, LogOut, Menu, X, Home, FileText, Eye, Camera, Bell, History, Mic, MicOff, TerminalSquare } from "lucide-react";
 import { Suspense, useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { ZenvoraLogo } from "@/components/zenvora-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSearchParams } from "next/navigation";
@@ -27,8 +28,10 @@ function AppSidebarFallback() {
 }
 
 function AppSidebarContent() {
+  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<{name: string; email: string; avatarUrl?: string | null} | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const { isConnected, devices, dispatch, subscribe } = useGateway();
   const searchParams = useSearchParams();
@@ -155,6 +158,39 @@ function AppSidebarContent() {
     }
   };
 
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+
+    if (isAudioStreaming) {
+      const target = activeDeviceIdRef.current;
+      if (target) {
+        dispatch("STOP_AUDIO_STREAM", {}, target);
+      }
+      setIsAudioStreaming(false);
+    }
+
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // Still clear local state and redirect even if the request fails.
+    }
+
+    try {
+      sessionStorage.removeItem("zenvora_device_registry");
+      sessionStorage.removeItem("zenvora_camera_streaming");
+      sessionStorage.removeItem("zenvora_screen_streaming");
+    } catch {
+      // ignore storage errors
+    }
+
+    router.replace("/login");
+    router.refresh();
+  };
+
   const userMenuItems = [
     { icon: Home, label: "Dashboard", href: "/dashboard" },
     { icon: Smartphone, label: "Devices", href: "/devices" },
@@ -166,13 +202,13 @@ function AppSidebarContent() {
     { icon: History, label: "Activity Logs", href: "/logs" },
   ];
 
-  const adminMenuItems = [
-    { icon: Shield, label: "Admin Dashboard", href: "/admin" },
-    { icon: Smartphone, label: "Devices", href: "/admin/devices" },
-    { icon: FileText, label: "Users", href: "/admin/users" },
-    { icon: History, label: "System Logs", href: "/admin/logs" },
-    { icon: Eye, label: "Security", href: "/admin/security" },
-  ];
+  // const adminMenuItems = [
+  //   { icon: Shield, label: "Admin Dashboard", href: "/admin" },
+  //   { icon: Smartphone, label: "Devices", href: "/admin/devices" },
+  //   { icon: FileText, label: "Users", href: "/admin/users" },
+  //   { icon: History, label: "System Logs", href: "/admin/logs" },
+  //   { icon: Eye, label: "Security", href: "/admin/security" },
+  // ];
 
   return (
     <>
@@ -259,7 +295,7 @@ function AppSidebarContent() {
           </div>
 
           {/* Admin Mode */}
-          <div className="border-t border-sidebar-border pt-8">
+          {/* <div className="border-t border-sidebar-border pt-8">
             <p className="text-xs font-mono text-sidebar-foreground/50 uppercase tracking-wide mb-4">Admin Mode</p>
             <nav className="space-y-2">
               {adminMenuItems.map((item) => (
@@ -274,14 +310,19 @@ function AppSidebarContent() {
                 </Link>
               ))}
             </nav>
-          </div>
+          </div> */}
         </div>
 
         {/* Footer */}
         <div className="bottom-0 left-0 right-0 p-6 border-t border-sidebar-border">
-          <button className="flex items-center gap-3 text-sm text-sidebar-foreground hover:text-sidebar-foreground/70 transition-colors w-full">
+          <button
+            type="button"
+            onClick={() => void handleLogout()}
+            disabled={loggingOut}
+            className="flex items-center gap-3 text-sm text-sidebar-foreground hover:text-sidebar-foreground/70 transition-colors w-full disabled:opacity-60"
+          >
             <LogOut className="w-4 h-4" />
-            <span>Logout</span>
+            <span>{loggingOut ? "Logging out..." : "Logout"}</span>
           </button>
         </div>
       </aside>

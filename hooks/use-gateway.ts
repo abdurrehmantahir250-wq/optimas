@@ -5,7 +5,10 @@ import { gatewayClient, type DeviceOption } from "@/lib/gateway-client";
 
 export function useGateway() {
   const [isConnected, setIsConnected] = useState(false);
-  const [devices, setDevices] = useState<DeviceOption[]>([]);
+  const [devices, setDevices] = useState<DeviceOption[]>(() => gatewayClient.getDevices());
+  const [devicesLoading, setDevicesLoading] = useState(
+    () => !gatewayClient.hasDeviceCache() && gatewayClient.isDevicesFetchInFlight()
+  );
   const [socket, setSocket] = useState<WebSocket | null>(gatewayClient.getSocket());
   const devicesRef = useRef(devices);
   devicesRef.current = devices;
@@ -14,7 +17,8 @@ export function useGateway() {
     setIsConnected(gatewayClient.isOpen());
     setDevices(gatewayClient.getDevices());
     setSocket(gatewayClient.getSocket());
-    void gatewayClient.refreshDevices();
+
+    void gatewayClient.refreshDevices().finally(() => setDevicesLoading(false));
 
     return gatewayClient.subscribe((event) => {
       if (event.type === "connected") {
@@ -26,33 +30,15 @@ export function useGateway() {
         setSocket(null);
       }
       if (event.type === "devices") {
-        console.log("EVENT DEVICES:", event.devices);
-
-        // Empty update ignore karo
         if (event.devices.length === 0 && devicesRef.current.length > 0) {
           return;
         }
-
         setDevices(event.devices);
+        setDevicesLoading(false);
       }
     });
   }, []);
 
-  useEffect(() => {
-    if (isConnected) {
-      void gatewayClient.refreshDevices();
-    }
-  }, [isConnected]);
-
-  // useEffect(() => {
-  //   if (!isConnected) return;
-
-  //   // const poll = setInterval(() => {
-  //   //   void gatewayClient.refreshDevices();
-  //   // }, 30000); // 30 sec
-
-  //   return () => clearInterval(poll);
-  // }, [isConnected]);
   const resolveTarget = useCallback(
     (override?: string) => override || devicesRef.current[0]?.value || "",
     []
@@ -79,11 +65,15 @@ export function useGateway() {
     [dispatch]
   );
 
-  const refreshDevices = useCallback(() => gatewayClient.refreshDevices(), []);
+  const refreshDevices = useCallback(
+    (force = false) => gatewayClient.refreshDevices({ force }),
+    []
+  );
 
   return {
     isConnected,
     devices,
+    devicesLoading,
     dispatch,
     sendCommand,
     refreshDevices,
@@ -91,5 +81,6 @@ export function useGateway() {
     getSocket,
     socket,
     subscribe: gatewayClient.subscribe.bind(gatewayClient),
+    getFullDevices: gatewayClient.getFullDevices.bind(gatewayClient),
   };
 }

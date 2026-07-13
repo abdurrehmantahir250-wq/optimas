@@ -16,6 +16,32 @@ export type DeviceOption = {
   username?: string;
 };
 
+export type DeviceRecord = {
+  deviceId: string;
+  platform: "windows" | "mac" | "android" | "linux" | "unknown";
+  status: "online" | "offline";
+  clientPort: number;
+  localIp: string;
+  publicIp: string;
+  battery: number | null;
+  storage: number | null;
+  network: string;
+  latitude: number | null;
+  longitude: number | null;
+  country: string;
+  region: string;
+  city: string;
+  isp: string;
+  timezone: string;
+  hostname: string;
+  username: string;
+  osVersion: string;
+  architecture: string;
+  cpu: string;
+  ram: number | null;
+  lastSeen: string;
+};
+
 export type GatewayEvent =
   | { type: "connected" }
   | { type: "disconnected" }
@@ -25,17 +51,144 @@ export type GatewayEvent =
 
 type GatewayListener = (event: GatewayEvent) => void;
 
+const DEVICE_CACHE_KEY = "zenvora_device_registry";
+const DEVICE_CACHE_TTL_MS = 12_000;
+const HEARTBEAT_INTERVAL_MS = 20_000;
+const HEARTBEAT_TIMEOUT_MS = 65_000;
+
+function readDeviceCache(): { options: DeviceOption[]; records: DeviceRecord[]; at: number } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(DEVICE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      options?: DeviceOption[];
+      records?: DeviceRecord[];
+      at?: number;
+    };
+    if (!parsed.at || !Array.isArray(parsed.options) || !Array.isArray(parsed.records)) {
+      return null;
+    }
+    return { options: parsed.options, records: parsed.records, at: parsed.at };
+  } catch {
+    return null;
+  }
+}
+
+function writeDeviceCache(options: DeviceOption[], records: DeviceRecord[]) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(
+      DEVICE_CACHE_KEY,
+      JSON.stringify({ options, records, at: Date.now() })
+    );
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function toDeviceOption(record: DeviceRecord): DeviceOption {
+  return {
+    value: record.deviceId,
+    label: record.hostname || record.deviceId,
+    role: "AGENT",
+    status: record.status,
+    platform: record.platform,
+    localIp: record.localIp || undefined,
+    publicIp: record.publicIp || undefined,
+    battery: record.battery,
+    storage: record.storage,
+    lastSeen: record.lastSeen || null,
+    network: record.network || undefined,
+    hostname: record.hostname || undefined,
+    username: record.username || undefined,
+  };
+}
+
+function normalizeDeviceRecord(raw: Record<string, unknown>): DeviceRecord {
+  return {
+    deviceId: String(raw.deviceId || raw.value || ""),
+    platform: (raw.platform as DeviceRecord["platform"]) || "unknown",
+    status: raw.status === "online" ? "online" : "offline",
+    clientPort: typeof raw.clientPort === "number" ? raw.clientPort : 8080,
+    localIp: String(raw.localIp || ""),
+    publicIp: String(raw.publicIp || ""),
+    battery: typeof raw.battery === "number" ? raw.battery : null,
+    storage: typeof raw.storage === "number" ? raw.storage : null,
+    network: String(raw.network || ""),
+    latitude: typeof raw.latitude === "number" ? raw.latitude : null,
+    longitude: typeof raw.longitude === "number" ? raw.longitude : null,
+    country: String(raw.country || ""),
+    region: String(raw.region || ""),
+    city: String(raw.city || ""),
+    isp: String(raw.isp || ""),
+    timezone: String(raw.timezone || ""),
+    hostname: String(raw.hostname || raw.label || ""),
+    username: String(raw.username || ""),
+    osVersion: String(raw.osVersion || ""),
+    architecture: String(raw.architecture || ""),
+    cpu: String(raw.cpu || ""),
+    ram: typeof raw.ram === "number" ? raw.ram : null,
+    lastSeen: raw.lastSeen ? String(raw.lastSeen) : "",
+  };
+}
+
 /** One WebSocket per browser tab — survives Next.js page navigation. */
 class GatewayClient {
   private ws: WebSocket | null = null;
   private listeners = new Set<GatewayListener>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private devices: DeviceOption[] = [];
+  private fullDevices: DeviceRecord[] = [];
   private connecting = false;
   private cameraStreaming = false;
   private cameraStreamingAgentId = "";
   private screenStreaming = false;
   private screenStreamingAgentId = "";
+  private lastRefreshAt = 0;
+  private refreshPromise: Promise<DeviceOption[]> | null = null;
+  private devicesFetchInFlight = false;
+  private lifecycleBound = false;
+
+  constructor() {
+    const cached = readDeviceCache();
+    if (cached) {
+      this.devices = cached.options;
+      this.fullDevices = cached.records;
+      this.lastRefreshAt = cached.at;
+    }
+    this.bindLifecycleHandlers();
+  }
+
+  private bindLifecycleHandlers() {
+    if (typeof window === "undefined" || this.lifecycleBound) return;
+    this.lifecycleBound = true;
+
+    window.addEventListener("online", () => {
+      this.ws = null;
+      this.connecting = false;
+      this.ensureConnected();
+      void this.refreshDevices({ force: true });
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        this.ws = null;
+        this.connecting = false;
+        this.ensureConnected();
+      }
+      void this.refreshDevices({ force: true });
+    });
+
+    window.addEventListener("focus", () => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        this.ws = null;
+        this.connecting = false;
+        this.ensureConnected();
+      }
+    });
+  }
 
   subscribe(listener: GatewayListener): () => void {
     this.listeners.add(listener);
@@ -46,6 +199,8 @@ class GatewayClient {
       if (this.devices.length > 0) {
         listener({ type: "devices", devices: this.devices });
       }
+    } else if (this.devices.length > 0) {
+      listener({ type: "devices", devices: this.devices });
     }
 
     return () => {
@@ -80,10 +235,19 @@ class GatewayClient {
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/gateway`);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    let lastPongAt = Date.now();
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+    const stopHeartbeat = () => {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
 
     ws.onopen = () => {
       this.connecting = false;
-      console.log("[GATEWAY] Dashboard connected");
+      lastPongAt = Date.now();
       ws.send(
         JSON.stringify({
           type: "register_channel",
@@ -93,6 +257,26 @@ class GatewayClient {
       );
       this.emit({ type: "connected" });
       void this.refreshDevices();
+
+      heartbeatTimer = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          stopHeartbeat();
+          return;
+        }
+
+        if (Date.now() - lastPongAt > HEARTBEAT_TIMEOUT_MS) {
+          stopHeartbeat();
+          ws.close();
+          return;
+        }
+
+        try {
+          ws.send(JSON.stringify({ type: "dashboard_ping" }));
+        } catch {
+          stopHeartbeat();
+          ws.close();
+        }
+      }, HEARTBEAT_INTERVAL_MS);
     };
 
     ws.onmessage = (event) => {
@@ -103,16 +287,15 @@ class GatewayClient {
 
       try {
         const packet = JSON.parse(event.data) as Record<string, unknown>;
-
-        console.log("WS PACKET:", packet);
+        if (packet.type === "dashboard_pong" || packet.type === "sys_ack") {
+          lastPongAt = Date.now();
+        }
         this.trackStreamingState(packet);
 
         if (
           (packet.type === "device_list_update" || packet.type === "sys_ack") &&
           Array.isArray(packet.devices)
         ) {
-          console.log("WS DEVICES:", packet.devices);
-
           const incoming = packet.devices as DeviceOption[];
           if (!this.sameDevices(this.devices, incoming)) {
             this.devices = incoming;
@@ -131,6 +314,7 @@ class GatewayClient {
     };
 
     ws.onclose = () => {
+      stopHeartbeat();
       this.connecting = false;
       this.ws = null;
       this.emit({ type: "disconnected" });
@@ -140,53 +324,91 @@ class GatewayClient {
       }
     };
   }
-private sameDevices(a: DeviceOption[], b: DeviceOption[]) {
-  if (a.length !== b.length) return false;
 
-  const sortFn = (x: DeviceOption, y: DeviceOption) =>
-    x.value.localeCompare(y.value);
+  private sameDevices(a: DeviceOption[], b: DeviceOption[]) {
+    if (a.length !== b.length) return false;
 
-  const aa = [...a].sort(sortFn);
-  const bb = [...b].sort(sortFn);
+    const sortFn = (x: DeviceOption, y: DeviceOption) => x.value.localeCompare(y.value);
+    const aa = [...a].sort(sortFn);
+    const bb = [...b].sort(sortFn);
 
-  return aa.every((d, i) => {
-    const x = bb[i];
+    return aa.every((d, i) => {
+      const x = bb[i];
+      return (
+        d.value === x.value &&
+        d.status === x.status &&
+        d.battery === x.battery &&
+        d.storage === x.storage &&
+        d.lastSeen === x.lastSeen
+      );
+    });
+  }
 
-    return (
-      d.value === x.value &&
-      d.status === x.status &&
-      d.battery === x.battery &&
-      d.storage === x.storage &&
-      d.lastSeen === x.lastSeen
-    );
-  });
-}
-  async refreshDevices(): Promise<DeviceOption[]> {
+  isDevicesFetchInFlight(): boolean {
+    return this.devicesFetchInFlight;
+  }
+
+  hasDeviceCache(): boolean {
+    return this.devices.length > 0 || this.fullDevices.length > 0;
+  }
+
+  getFullDevices(): DeviceRecord[] {
+    return this.fullDevices;
+  }
+
+  async refreshDevices(options: { force?: boolean } = {}): Promise<DeviceOption[]> {
+    const { force = false } = options;
+    const now = Date.now();
+
+    if (!force && this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    if (!force && now - this.lastRefreshAt < DEVICE_CACHE_TTL_MS && this.devices.length > 0) {
+      return this.devices;
+    }
+
+    this.devicesFetchInFlight = true;
+    this.refreshPromise = this.fetchDevicesFromNetwork()
+      .finally(() => {
+        this.devicesFetchInFlight = false;
+        this.refreshPromise = null;
+      });
+
+    return this.refreshPromise;
+  }
+
+  private async fetchDevicesFromNetwork(): Promise<DeviceOption[]> {
     try {
-      const requests = [
-        fetch("/api/network/live-agents", { cache: "no-store", credentials: "include" }),
-        fetch("/api/network/devices", { cache: "no-store", credentials: "include" }),
-      ];
+      const response = await fetch("/api/network/devices", {
+        credentials: "include",
+        cache: "no-store",
+      });
 
-      const results = await Promise.allSettled(requests);
-      const incoming: DeviceOption[] = [];
-
-      for (const result of results) {
-        if (result.status !== "fulfilled" || !result.value.ok) continue;
-
-        const data = await result.value.json().catch(() => null);
-        if (data?.success && Array.isArray(data.devices)) {
-          incoming.push(...(data.devices as DeviceOption[]));
-        }
+      if (!response.ok) {
+        return this.devices;
       }
 
-      const unique = incoming.filter(
-        (device, index, arr) => arr.findIndex((item) => item.value === device.value) === index
-      );
+      const data = await response.json().catch(() => null);
+      if (!data?.success || !Array.isArray(data.devices)) {
+        return this.devices;
+      }
 
-      if (unique.length > 0 && !this.sameDevices(this.devices, unique)) {
-        this.devices = unique;
+      const records = (data.devices as Record<string, unknown>[])
+        .map(normalizeDeviceRecord)
+        .filter((device) => device.deviceId);
+
+      const options = records.map(toDeviceOption);
+
+      this.lastRefreshAt = Date.now();
+      writeDeviceCache(options, records);
+
+      if (!this.sameDevices(this.devices, options)) {
+        this.devices = options;
+        this.fullDevices = records;
         this.emit({ type: "devices", devices: this.devices });
+      } else {
+        this.fullDevices = records;
       }
 
       return this.devices;
@@ -197,15 +419,12 @@ private sameDevices(a: DeviceOption[], b: DeviceOption[]) {
 
   dispatch(action: string, targetDeviceId: string, payload: Record<string, unknown> = {}): boolean {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("[GATEWAY] dispatch blocked — socket not open:", action);
       return false;
     }
     if (!targetDeviceId) {
-      console.warn("[GATEWAY] dispatch blocked — no target:", action);
       return false;
     }
 
-    console.log(`[GATEWAY] dispatch ${action} -> ${targetDeviceId}`, payload);
     this.ws.send(
       JSON.stringify({
         type: "dispatch_control",
@@ -258,8 +477,7 @@ private sameDevices(a: DeviceOption[], b: DeviceOption[]) {
       (packet.metrics as Record<string, unknown> | undefined) ||
       (packet.hardware_metrics as Record<string, unknown> | undefined);
 
-    const sender =
-      typeof packet.senderAgentId === "string" ? packet.senderAgentId : "";
+    const sender = typeof packet.senderAgentId === "string" ? packet.senderAgentId : "";
 
     if (isCameraPacket && typeof metrics?.streaming_active === "boolean") {
       this.cameraStreaming = metrics.streaming_active;

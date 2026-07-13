@@ -1,0 +1,237 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+const FRAME_SCREEN_STREAM = 0x04;
+const FRAME_SCREEN_SNAPSHOT = 0x05;
+
+export type ScreenTelemetry = {
+  resolution: string;
+  screenWidth: number;
+  screenHeight: number;
+  fps: string;
+  status: string;
+  displayName: string;
+};
+
+export type DetectedDisplay = {
+  id: string;
+  index: number;
+  label: string;
+  status: string;
+  resolution: string;
+  is_primary?: boolean;
+};
+
+type UseScreenRemoteOptions = {
+  subscribe: (listener: (event: { type: string; data?: ArrayBuffer | Blob; packet?: Record<string, unknown> }) => void) => () => void;
+};
+
+function b64ToBlob(b64: string, mimeType: string): Blob {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+function parseResolution(resolution: string) {
+  const match = resolution.match(/(\d+)\s*x\s*(\d+)/i);
+  if (!match) return null;
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
+export function useScreenRemote({ subscribe }: UseScreenRemoteOptions) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const bitmapRef = useRef<ImageBitmap | null>(null);
+  const latestBlobRef = useRef<Blob | null>(null);
+  const paintScheduledRef = useRef(false);
+  const fpsTimerRef = useRef({ last: Date.now(), count: 0 });
+  const paintFrameRef = useRef<(blob: Blob) => void>(() => {});
+
+  const [hasLiveFrame, setHasLiveFrame] = useState(false);
+  const [measuredFps, setMeasuredFps] = useState("0");
+  const [frameCount, setFrameCount] = useState(0);
+  const [telemetry, setTelemetry] = useState<ScreenTelemetry>({
+    resolution: "---",
+    screenWidth: 1920,
+    screenHeight: 1080,
+    fps: "---",
+    status: "STANDBY",
+    displayName: "---",
+  });
+  const [detectedDisplays, setDetectedDisplays] = useState<DetectedDisplay[]>([]);
+  const [activeDisplay, setActiveDisplay] = useState("");
+
+  const paintFrame = useCallback(async (blob: Blob) => {
+    if (blob.size < 100) return;
+
+    latestBlobRef.current = blob;
+    if (paintScheduledRef.current) return;
+    paintScheduledRef.current = true;
+
+    requestAnimationFrame(async () => {
+      paintScheduledRef.current = false;
+      const frame = latestBlobRef.current;
+      const canvas = canvasRef.current;
+      if (!frame || !canvas) return;
+
+      try {
+        const bitmap = await createImageBitmap(frame);
+        const ctx = canvas.getContext("2d", { alpha: false });
+        if (!ctx) {
+          bitmap.close();
+          return;
+        }
+
+        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+        }
+
+        ctx.drawImage(bitmap, 0, 0);
+        if (bitmapRef.current) bitmapRef.current.close();
+        bitmapRef.current = bitmap;
+
+        setHasLiveFrame(true);
+        setFrameCount((c) => c + 1);
+
+        const now = Date.now();
+        fpsTimerRef.current.count += 1;
+        if (now - fpsTimerRef.current.last >= 1000) {
+          setMeasuredFps(String(fpsTimerRef.current.count));
+          fpsTimerRef.current = { last: now, count: 0 };
+        }
+      } catch (err) {
+        console.warn("Frame paint failed:", err);
+      }
+    });
+  }, []);
+
+  paintFrameRef.current = paintFrame;
+
+  const processBinaryPayload = useCallback((payload: ArrayBuffer | Blob) => {
+    const decodeAndPaint = (buffer: Uint8Array) => {
+      if (buffer.length < 4) return;
+      const frameType = buffer[0];
+      if (frameType !== FRAME_SCREEN_STREAM && frameType !== FRAME_SCREEN_SNAPSHOT) return;
+      const jpegBlob = new Blob([buffer.buffer.slice(buffer.byteOffset + 1, buffer.byteOffset + buffer.byteLength)], {
+        type: "image/jpeg",
+      });
+      void paintFrameRef.current(jpegBlob);
+    };
+
+    if (payload instanceof Blob) {
+      void payload.arrayBuffer().then((raw) => decodeAndPaint(new Uint8Array(raw)));
+      return;
+    }
+    decodeAndPaint(new Uint8Array(payload));
+  }, []);
+
+  const processBinaryRef = useRef(processBinaryPayload);
+  processBinaryRef.current = processBinaryPayload;
+
+  const resetPreview = useCallback(() => {
+    latestBlobRef.current = null;
+    if (bitmapRef.current) {
+      bitmapRef.current.close();
+      bitmapRef.current = null;
+    }
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    setHasLiveFrame(false);
+    setFrameCount(0);
+    setMeasuredFps("0");
+    fpsTimerRef.current = { last: Date.now(), count: 0 };
+  }, []);
+
+  useEffect(() => {
+    return subscribe((event) => {
+      if (event.type === "binary" && event.data) {
+        processBinaryRef.current(event.data);
+        return;
+      }
+      if (event.type !== "json" || !event.packet) return;
+
+      const packet = event.packet;
+      if (packet.type !== "screen_telemetry_stream") return;
+
+      const metrics = (packet.metrics || {}) as Record<string, unknown>;
+
+      if (Array.isArray(metrics.available_displays)) {
+        setDetectedDisplays(metrics.available_displays as DetectedDisplay[]);
+      }
+
+      const resolution = String(metrics.resolution || "---");
+      const parsed = parseResolution(resolution);
+
+      setTelemetry((prev) => ({
+        resolution: resolution !== "---" ? resolution : prev.resolution,
+        screenWidth: parsed?.width || prev.screenWidth,
+        screenHeight: parsed?.height || prev.screenHeight,
+        fps: String(metrics.fps || prev.fps),
+        status: String(packet.status || metrics.status || prev.status),
+        displayName: String(metrics.display_name || prev.displayName),
+      }));
+
+      const embeddedFrame =
+        (typeof packet.live_frame_b64 === "string" && packet.live_frame_b64) ||
+        (typeof metrics.live_frame_b64 === "string" && metrics.live_frame_b64);
+
+      if (typeof embeddedFrame === "string" && embeddedFrame.length > 100) {
+        try {
+          void paintFrameRef.current(b64ToBlob(embeddedFrame, "image/jpeg"));
+        } catch (err) {
+          console.warn("live_frame_b64 decode failed:", err);
+        }
+      }
+    });
+  }, [subscribe]);
+
+  const mapPointerToRemote = useCallback(
+    (clientX: number, clientY: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+
+      const relX = (clientX - rect.left) / rect.width;
+      const relY = (clientY - rect.top) / rect.height;
+      if (relX < 0 || relX > 1 || relY < 0 || relY > 1) return null;
+
+      return {
+        x: Math.round(relX * telemetry.screenWidth),
+        y: Math.round(relY * telemetry.screenHeight),
+        screen_width: telemetry.screenWidth,
+        screen_height: telemetry.screenHeight,
+      };
+    },
+    [telemetry.screenWidth, telemetry.screenHeight]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (bitmapRef.current) bitmapRef.current.close();
+    };
+  }, []);
+
+  return {
+    canvasRef,
+    containerRef,
+    hasLiveFrame,
+    measuredFps,
+    frameCount,
+    telemetry,
+    detectedDisplays,
+    activeDisplay,
+    setActiveDisplay,
+    resetPreview,
+    mapPointerToRemote,
+  };
+}

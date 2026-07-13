@@ -4,56 +4,47 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CustomSlider } from "@/components/custom-slider";
+import { Label } from "@/components/ui/label";
+import { useScreenRemote } from "@/hooks/use-screen-remote";
+import { useGateway } from "@/hooks/use-gateway";
+import type { DeviceOption } from "@/lib/gateway-client";
 import {
-  Download,
-  Monitor,
+  Keyboard,
+  Lock,
   Maximize2,
-  RotateCw,
+  Minimize2,
+  Monitor,
+  MousePointer2,
+  Power,
+  RefreshCw,
   Settings,
   Volume2,
-  Lock,
-  Power,
-  Radar,
-  RefreshCw,
-  Cpu,
-  Trash2,
-  Image as ImageIcon,
+  X,
+  Sparkles,
 } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Select from "react-select";
-import { useGateway } from "@/hooks/use-gateway";
-import { gatewayClient } from "@/lib/gateway-client";
-import type { DeviceOption } from "@/lib/gateway-client";
 
-function b64ToBlob(b64: string, mimeType: string): Blob {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
+type StreamQuality = "low" | "medium" | "high" | "ultra";
+
+const QUALITY_OPTIONS: { value: StreamQuality; label: string; hint: string }[] = [
+  { value: "low", label: "Low", hint: "960p · fastest" },
+  { value: "medium", label: "Medium", hint: "1280p · balanced" },
+  { value: "high", label: "High", hint: "1600p · sharp" },
+  { value: "ultra", label: "Ultra", hint: "1920p · best clarity" },
+];
+
+function loadSavedQuality(): StreamQuality {
+  try {
+    const saved = sessionStorage.getItem("zenvora_screen_quality");
+    if (saved === "low" || saved === "medium" || saved === "high" || saved === "ultra") {
+      return saved;
+    }
+  } catch {
+    // ignore
   }
-  return new Blob([bytes], { type: mimeType });
+  return "medium";
 }
-
-type ScreenTelemetry = {
-  resolution: string;
-  fps: string;
-  bitrate: string;
-  latency: string;
-  status: string;
-  displayName: string;
-};
-
-type DetectedDisplay = {
-  id: string;
-  index: number;
-  label: string;
-  status: string;
-  resolution: string;
-  is_primary?: boolean;
-};
-
-const FRAME_SCREEN_STREAM = 0x04;
-const FRAME_SCREEN_SNAPSHOT = 0x05;
 
 export default function ScreenPage() {
   const {
@@ -65,57 +56,53 @@ export default function ScreenPage() {
     subscribe,
   } = useGateway();
 
-  const [selectedDevice, setSelectedDevice] = useState("");
-  const [commandStatus, setCommandStatus] = useState("Waiting for live agent...");
-  const [isStreaming, setIsStreaming] = useState(() => {
-    if (gatewayClient.isScreenStreaming()) return true;
-    try {
-      return sessionStorage.getItem("zenvora_screen_streaming") === "1";
-    } catch {
-      return false;
-    }
+  const {
+    canvasRef,
+    containerRef,
+    hasLiveFrame,
+    measuredFps,
+    frameCount,
+    telemetry,
+    detectedDisplays,
+    activeDisplay,
+    setActiveDisplay,
+    resetPreview,
+    mapPointerToRemote,
+  } = useScreenRemote({
+    subscribe: (listener) =>
+      subscribe((event) => {
+        if (event.type === "binary") listener({ type: "binary", data: event.data });
+        else if (event.type === "json") listener({ type: "json", packet: event.packet });
+      }),
   });
-  const [hasLiveFrame, setHasLiveFrame] = useState(false);
-  const [liveFrameCount, setLiveFrameCount] = useState(0);
-  const [scanningDisplays, setScanningDisplays] = useState(false);
-const [capturingScreenshot, setCapturingScreenshot] = useState(false);
-  const [capturedScreenshots, setCapturedScreenshots] = useState<
-    Array<{ id: string; url: string; time: string }>
-  >([]);
-  const [detectedDisplays, setDetectedDisplays] = useState<DetectedDisplay[]>([]);
-  const [activeDisplay, setActiveDisplay] = useState("");
+
+  const [selectedDevice, setSelectedDevice] = useState("");
+  const [commandStatus, setCommandStatus] = useState("Connecting...");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [controlEnabled, setControlEnabled] = useState(true);
+  const [showPanel, setShowPanel] = useState(true);
   const [brightness, setBrightness] = useState(100);
   const [volume, setVolume] = useState(100);
-  const [inputText, setInputText] = useState("");
-  const [sentInputs, setSentInputs] = useState<string[]>([]);
-  const [typingPreview, setTypingPreview] = useState("");
-  const [telemetry, setTelemetry] = useState<ScreenTelemetry>({
-    resolution: "---",
-    fps: "---",
-    bitrate: "---",
-    latency: "Connecting...",
-    status: "STANDBY",
-    displayName: "---",
-  });
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [streamQuality, setStreamQuality] = useState<StreamQuality>(loadSavedQuality);
+
+  const streamQualityRef = useRef<StreamQuality>(streamQuality);
 
   const selectedDeviceRef = useRef("");
-  const liveImgRef = useRef<HTMLImageElement>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
-  const lastBlobUrlRef = useRef<string | null>(null);
-  const lastFrameBlobRef = useRef<Blob | null>(null);
-  const framesReceivedRef = useRef(0);
-  const sliderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fpsTimerRef = useRef<{ last: number; count: number }>({ last: Date.now(), count: 0 });
-  const latestFrameRef = useRef<Blob | null>(null);
-  const paintScheduledRef = useRef(false);
-  const hasLiveFrameRef = useRef(false);
-  const [measuredFps, setMeasuredFps] = useState("---");
-
-  const selectedDeviceOption = deviceOptions.find((opt) => opt.value === selectedDevice) || null;
-  const canControl = isConnected;
-  const activeDisplayMeta = detectedDisplays.find((d) => d.id === activeDisplay) || null;
-
   const activeDisplayRef = useRef("");
+  const moveThrottleRef = useRef(0);
+  const sliderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const selectedDeviceOption =
+    deviceOptions.find((opt) => opt.value === selectedDevice) || null;
+
+  useEffect(() => {
+    streamQualityRef.current = streamQuality;
+  }, [streamQuality]);
+
+  useEffect(() => {
+    selectedDeviceRef.current = selectedDevice;
+  }, [selectedDevice]);
 
   useEffect(() => {
     activeDisplayRef.current = activeDisplay;
@@ -128,390 +115,101 @@ const [capturingScreenshot, setCapturingScreenshot] = useState(false);
       const first = deviceOptions[0].value;
       selectedDeviceRef.current = first;
       setSelectedDevice(first);
-      setCommandStatus(`Connected to agent: ${first}`);
     }
   }, [deviceOptions]);
 
-  const uploadMediaToVault = async (blob: Blob) => {
-    const deviceId = selectedDeviceRef.current;
-    if (!deviceId) {
-      throw new Error("Select a live agent device before saving to cloud vault.");
-    }
-
-    const formData = new FormData();
-    formData.append("file", blob, `screen_${Date.now()}.jpg`);
-    formData.append("type", "image");
-    formData.append("deviceId", deviceId);
-    formData.append("source", "screen");
-
-    const response = await fetch("/api/media/upload", {
-      method: "POST",
-      body: formData,
-    });
-
-    const result = await response.json();
-    if (!response.ok || !result.success) {
-      throw new Error(result.message || "Database media save failed.");
-    }
-
-    await loadServerGallery(deviceId);
-    return result;
-  };
-
-  const saveScreenshotToGallery = async (blob: Blob) => {
-    setCommandStatus("Saving screenshot to database vault...");
-
-    try {
-      await uploadMediaToVault(blob);
-      setCommandStatus("Screenshot saved to database vault.");
-    } catch (error) {
-      console.error("Screenshot upload failed:", error);
-      setCommandStatus(
-        error instanceof Error ? error.message : "Screenshot save failed — check agent and database."
-      );
-    }
-  };
-
-  const loadServerGallery = async (deviceId?: string) => {
-    const targetId = deviceId || selectedDeviceRef.current;
-    if (!targetId) return;
-
-    try {
-      const response = await fetch(
-        `/api/media/list?deviceId=${encodeURIComponent(targetId)}&source=screen`
-      );
-      const contentType = response.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) return;
-
-      const data = await response.json();
-      if (!response.ok || !data.success || !Array.isArray(data.items)) return;
-
-      const serverPhotos = data.items
-        .filter((item: { type: string; id?: string }) => item.type === "image" && item.id && !String(item.id).includes("/"))
-        .map((item: { id: string; url: string; timestamp?: string }) => ({
-          id: String(item.id),
-          url: item.url,
-          time: item.timestamp
-            ? new Date(item.timestamp).toLocaleTimeString()
-            : new Date().toLocaleTimeString(),
-        }));
-
-      setCapturedScreenshots(serverPhotos);
-    } catch (error) {
-      console.warn("Failed to load screen gallery:", error);
-    }
-  };
-
-  const downloadAsset = (assetUrl: string, fileName: string) => {
-    const downloadLink = document.createElement("a");
-    downloadLink.href = assetUrl;
-    downloadLink.download = fileName;
-    downloadLink.target = "_blank";
-    downloadLink.rel = "noopener noreferrer";
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
-  };
-
-  const clearGalleryItem = async (id: string) => {
-    if (!id || id.includes("/")) {
-      setCommandStatus("Invalid media id — refresh gallery from database.");
-      return;
-    }
-    try {
-      const response = await fetch(`/api/media/${encodeURIComponent(id)}`, { method: "DELETE" });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.message || "Delete failed");
-      }
-      setCapturedScreenshots((prev) => prev.filter((item) => item.id !== id));
-      setCommandStatus("Moved to trash. Restore from File Manager → Trash.");
-    } catch (error) {
-      console.error("Gallery delete failed:", error);
-      setCommandStatus(error instanceof Error ? error.message : "Could not delete — refresh and try again.");
-    }
-  };
-
   useEffect(() => {
-    if (!isConnected) return;
-    const target =
-      selectedDeviceRef.current ||
-      gatewayClient.getScreenStreamingAgentId() ||
-      deviceOptions[0]?.value;
-    if (!target) return;
-    selectedDeviceRef.current = target;
-    setSelectedDevice((prev) => prev || target);
-    gatewayDispatch("FETCH_SCREEN_TELEMETRY", {}, target);
-    void loadServerGallery(target);
-  }, [isConnected, deviceOptions.length, gatewayDispatch]);
-
-  useEffect(() => {
-    if (!selectedDevice) return;
-    void loadServerGallery(selectedDevice);
-  }, [selectedDevice]);
-
-  useEffect(() => {
-    if (isConnected && deviceOptions.length === 0) {
-      setCommandStatus("Gateway connected — waiting for Rust agent...");
-    }
-    if (isConnected && deviceOptions.length > 0) {
-      setCommandStatus((prev) =>
-        prev.startsWith("Gateway disconnected") ? `Connected to agent: ${deviceOptions[0].value}` : prev
-      );
-    }
     if (!isConnected) {
-      setCommandStatus("Connecting to gateway... (run npm run dev)");
-    }
-  }, [isConnected, deviceOptions.length, deviceOptions]);
-
-  const dispatchControl = (
-    action: string,
-    payload: Record<string, unknown> = {},
-    targetOverride?: string
-  ) => {
-    const target = targetOverride || selectedDeviceRef.current || resolveTarget(deviceOptions[0]?.value);
-    if (!target) {
-      setCommandStatus("No live agent. Run: cd zenvora_agent && cargo run");
-      void refreshDevices();
+      setCommandStatus("Connecting to gateway...");
       return;
     }
-
-    if (!selectedDeviceRef.current) {
-      selectedDeviceRef.current = target;
-      setSelectedDevice(target);
-    }
-
-    const result = gatewayDispatch(action, payload, target);
-    if (!result.ok) {
-      setCommandStatus(
-        result.reason === "offline"
-          ? "Gateway not connected — wait for green dot."
-          : "No live agent found. Run: cd zenvora_agent && cargo run"
-      );
+    if (deviceOptions.length === 0) {
+      setCommandStatus("Gateway connected — waiting for Rust agent...");
       return;
     }
-    setCommandStatus(`Sent ${action} → ${result.target}`);
-  
-  };
+    setCommandStatus(`Ready — ${deviceOptions.length} agent(s) online`);
+  }, [isConnected, deviceOptions.length]);
 
-  const probeDisplays = async () => {
-  if (scanningDisplays) return;
+  const dispatchControl = useCallback(
+    (action: string, payload: Record<string, unknown> = {}, targetOverride?: string) => {
+      const target =
+        targetOverride || selectedDeviceRef.current || resolveTarget(deviceOptions[0]?.value);
+      if (!target) {
+        setCommandStatus("No live agent found.");
+        void refreshDevices();
+        return false;
+      }
 
-  setScanningDisplays(true);
+      if (!selectedDeviceRef.current) {
+        selectedDeviceRef.current = target;
+        setSelectedDevice(target);
+      }
 
-  try {
-    await refreshDevices();
+      const result = gatewayDispatch(action, payload, target);
+      if (!result.ok) {
+        setCommandStatus(
+          result.reason === "offline"
+            ? "Gateway disconnected."
+            : "Agent offline — start zenvora_agent."
+        );
+        return false;
+      }
+      return true;
+    },
+    [deviceOptions, gatewayDispatch, refreshDevices, resolveTarget]
+  );
 
-    const target = selectedDeviceRef.current || resolveTarget();
-
-    if (!target) {
-      setCommandStatus("No live agent. Start agent: cd zenvora_agent && cargo run");
-      return;
-    }
-
-    setDetectedDisplays([]);
-    setActiveDisplay("");
-
-    dispatchControl("PROBE_DISPLAYS", {}, target);
-    dispatchControl("LIST_DISPLAYS", {}, target);
-
-    setCommandStatus("Scanning displays on agent...");
-  } finally {
-    // thora delay taake ack aajaye
-    setTimeout(() => setScanningDisplays(false), 1500);
-  }
-};
-
-  const startScreenStream = async () => {
-    await refreshDevices();
+  const probeAndStream = useCallback(async () => {
     const target = selectedDeviceRef.current || resolveTarget();
     if (!target) {
-      setCommandStatus("No live agent. Start agent: cd zenvora_agent && cargo run");
+      setCommandStatus("No live agent.");
       return;
     }
-    resetLivePreview();
+
+    selectedDeviceRef.current = target;
     setIsStreaming(true);
+    setCommandStatus("Starting stream...");
+
+    // Start stream immediately with selected quality
+    dispatchControl("START_SCREEN_STREAM", { quality: streamQualityRef.current }, target);
+
     try {
       sessionStorage.setItem("zenvora_screen_streaming", "1");
     } catch {
-      // ignore storage errors
-    }
-    dispatchControl("START_SCREEN_STREAM", {}, target);
-    setCommandStatus("Starting screen stream...");
-  };
-
-  const resetLivePreview = () => {
-    framesReceivedRef.current = 0;
-    lastFrameBlobRef.current = null;
-    setHasLiveFrame(false);
-    hasLiveFrameRef.current = false;
-    setLiveFrameCount(0);
-    setMeasuredFps("---");
-    if (lastBlobUrlRef.current) {
-      URL.revokeObjectURL(lastBlobUrlRef.current);
-      lastBlobUrlRef.current = null;
-    }
-    if (liveImgRef.current) liveImgRef.current.removeAttribute("src");
-  };
-
-  const showLiveFrame = useCallback((blob: Blob) => {
-    if (blob.size < 100) return;
-
-    latestFrameRef.current = blob;
-    framesReceivedRef.current += 1;
-
-    const now = Date.now();
-    fpsTimerRef.current.count += 1;
-    if (now - fpsTimerRef.current.last >= 1000) {
-      setMeasuredFps(String(fpsTimerRef.current.count));
-      setLiveFrameCount(framesReceivedRef.current);
-      fpsTimerRef.current = { last: now, count: 0 };
+      // ignore
     }
 
-    if (paintScheduledRef.current) return;
-    paintScheduledRef.current = true;
-
-    requestAnimationFrame(() => {
-      paintScheduledRef.current = false;
-      const frame = latestFrameRef.current;
-      if (!frame || !liveImgRef.current) return;
-
-      lastFrameBlobRef.current = frame;
-      const url = URL.createObjectURL(frame);
-      if (lastBlobUrlRef.current) URL.revokeObjectURL(lastBlobUrlRef.current);
-      lastBlobUrlRef.current = url;
-      liveImgRef.current.src = url;
-
-      if (!hasLiveFrameRef.current) {
-        hasLiveFrameRef.current = true;
-        setHasLiveFrame(true);
-        setCommandStatus("Live screen stream active.");
-      }
+    // Display metadata in background (does not block video)
+    void refreshDevices().then(() => {
+      dispatchControl("PROBE_DISPLAYS", {}, target);
+      dispatchControl("LIST_DISPLAYS", {}, target);
     });
-  }, []);
+  }, [dispatchControl, refreshDevices, resolveTarget]);
 
-  const processBinaryPayload = useCallback(
-    (payload: ArrayBuffer | Blob) => {
-      const bytes =
-        payload instanceof Blob
-          ? null
-          : new Uint8Array(payload);
-
-      const decodeAndPaint = (buffer: Uint8Array) => {
-        if (buffer.length < 4) return;
-
-        const frameType = buffer[0];
-        if (frameType !== FRAME_SCREEN_STREAM && frameType !== FRAME_SCREEN_SNAPSHOT) return;
-
-        const jpegBlob = new Blob([buffer.slice(1)], { type: "image/jpeg" });
-        showLiveFrame(jpegBlob);
-      };
-
-      if (bytes) {
-        decodeAndPaint(bytes);
-        return;
-      }
-
-      void (payload as Blob).arrayBuffer().then((raw) => decodeAndPaint(new Uint8Array(raw)));
-    },
-    [showLiveFrame]
-  );
-
-  const processBinaryRef = useRef(processBinaryPayload);
-  processBinaryRef.current = processBinaryPayload;
-
-  const showLiveFrameRef = useRef(showLiveFrame);
-  showLiveFrameRef.current = showLiveFrame;
-
-  const stopScreenStream = () => {
+  const stopStream = useCallback(() => {
     dispatchControl("STOP_SCREEN_STREAM", {});
-    resetLivePreview();
+    resetPreview();
     setIsStreaming(false);
     try {
       sessionStorage.setItem("zenvora_screen_streaming", "0");
     } catch {
-      // ignore storage errors
+      // ignore
     }
-    setCommandStatus("Screen stream stopped.");
-  };
-
-  const handleDisplaySwitch = (display: DetectedDisplay) => {
-    setActiveDisplay(display.id);
-    activeDisplayRef.current = display.id;
-    dispatchControl("SWITCH_DISPLAY", {
-      display: display.id,
-      display_index: display.index,
-    });
-    if (isStreaming) {
-      resetLivePreview();
-      setTimeout(() => dispatchControl("START_SCREEN_STREAM", {}), 250);
-    }
-  };
-
- const handleScreenshot = async () => {
-  if (capturingScreenshot) return;
-
-  setCapturingScreenshot(true);
-
-  try {
-    if (lastFrameBlobRef.current) {
-      await saveScreenshotToGallery(lastFrameBlobRef.current);
-      return;
-    }
-
-    dispatchControl("CAPTURE_SCREENSHOT", {
-      display: activeDisplayRef.current,
-    });
-
-    setCommandStatus("Capturing screenshot...");
-  } finally {
-    setTimeout(() => setCapturingScreenshot(false), 1500);
-  }
-};
-
-  const handleFullscreen = () => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    if (document.fullscreenElement) {
-      void document.exitFullscreen();
-    } else {
-      void stage.requestFullscreen();
-    }
-  };
-
-  const handleSliderChange = (param: "SET_DISPLAY_BRIGHTNESS" | "SET_SYSTEM_VOLUME", value: number) => {
-    if (param === "SET_DISPLAY_BRIGHTNESS") setBrightness(value);
-    else setVolume(value);
-
-    if (sliderTimerRef.current) clearTimeout(sliderTimerRef.current);
-    sliderTimerRef.current = setTimeout(() => {
-      dispatchControl(param, { degree_value: value });
-    }, 180);
-  };
-
-  const handleSendInput = () => {
-    if (!inputText.trim()) return;
-    const text = inputText.trim();
-    dispatchControl("SEND_TEXT_INPUT", { text });
-    setSentInputs((prev) => [...prev.slice(-4), text]);
-    setTypingPreview("");
-    setInputText("");
-    setCommandStatus(`Input sent: "${text}"`);
-  };
+    setCommandStatus("Remote desktop stopped.");
+  }, [dispatchControl, resetPreview]);
 
   useEffect(() => {
-    selectedDeviceRef.current = selectedDevice;
-  }, [selectedDevice]);
+    if (!isConnected || !selectedDevice) return;
+    void probeAndStream();
+    return () => {
+      dispatchControl("STOP_SCREEN_STREAM", {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, selectedDevice]);
 
   useEffect(() => {
     return subscribe((event) => {
-      if (event.type === "binary") {
-        processBinaryRef.current(event.data);
-        return;
-      }
-
       if (event.type !== "json") return;
-
       const packet = event.packet;
 
       if (packet.type === "sys_error") {
@@ -522,504 +220,427 @@ const [capturingScreenshot, setCapturingScreenshot] = useState(false);
       if (packet.type === "screen_telemetry_stream") {
         const metrics = (packet.metrics || {}) as Record<string, unknown>;
         const sender = packet.senderAgentId as string | undefined;
-
         if (selectedDeviceRef.current && sender && sender !== selectedDeviceRef.current) return;
 
-        if (Array.isArray(metrics.available_displays)) {
-          setDetectedDisplays(metrics.available_displays as DetectedDisplay[]);
-          if (!activeDisplayRef.current && metrics.available_displays.length > 0) {
-            const first = metrics.available_displays[0] as DetectedDisplay;
-            setActiveDisplay(first.id);
-            activeDisplayRef.current = first.id;
+        if (Array.isArray(metrics.available_displays) && metrics.available_displays.length > 0) {
+          const displays = metrics.available_displays as Array<{ id: string }>;
+          if (!activeDisplayRef.current) {
+            setActiveDisplay(displays[0].id);
+            activeDisplayRef.current = displays[0].id;
           }
         }
 
-        setTelemetry((prev) => ({
-          resolution: (metrics.resolution as string) || prev.resolution,
-          fps: (metrics.fps as string) || prev.fps,
-          bitrate: (metrics.bitrate as string) || prev.bitrate,
-          latency: metrics.latency_ms ? `${metrics.latency_ms}ms` : prev.latency,
-          status: (packet.status as string) || (metrics.status as string) || prev.status,
-          displayName: (metrics.display_name as string) || prev.displayName,
-        }));
-
-        const action = packet.action as string | undefined;
-        if (typeof metrics.brightness === "number" && (
-          action === "SET_DISPLAY_BRIGHTNESS" ||
-          action === "PROBE_DISPLAYS" ||
-          action === "LIST_DISPLAYS"
-        )) {
-          setBrightness(metrics.brightness as number);
-        }
-        if (typeof metrics.volume === "number" && (
-          action === "SET_SYSTEM_VOLUME" ||
-          action === "PROBE_DISPLAYS" ||
-          action === "LIST_DISPLAYS"
-        )) {
-          setVolume(metrics.volume as number);
-        }
+        if (typeof metrics.brightness === "number") setBrightness(metrics.brightness);
+        if (typeof metrics.volume === "number") setVolume(metrics.volume);
         if (typeof metrics.streaming_active === "boolean") {
-          setIsStreaming(metrics.streaming_active as boolean);
-          try {
-            sessionStorage.setItem(
-              "zenvora_screen_streaming",
-              metrics.streaming_active ? "1" : "0"
-            );
-          } catch {
-            // ignore storage errors
+          setIsStreaming(metrics.streaming_active);
+        }
+        if (typeof metrics.stream_quality === "string") {
+          const q = metrics.stream_quality as StreamQuality;
+          if (QUALITY_OPTIONS.some((o) => o.value === q)) {
+            setStreamQuality(q);
           }
         }
-
-        const embeddedFrame =
-          (typeof packet.live_frame_b64 === "string" && packet.live_frame_b64) ||
-          (typeof metrics.live_frame_b64 === "string" && metrics.live_frame_b64);
-
-        if (typeof embeddedFrame === "string" && embeddedFrame.length > 100) {
-          try {
-            const blob = b64ToBlob(embeddedFrame, "image/jpeg");
-            showLiveFrameRef.current(blob);
-            if (action === "CAPTURE_SCREENSHOT") {
-              void saveScreenshotToGallery(blob);
-            }
-          } catch (error) {
-            console.warn("live_frame_b64 decode failed:", error);
-          }
-        }
-
         if (packet.message) setCommandStatus(String(packet.message));
-
-        if (
-          action === "SEND_TEXT_INPUT" &&
-          typeof metrics.last_sent_text === "string" &&
-          metrics.last_sent_text
-        ) {
-          setSentInputs((prev) => {
-            if (prev[prev.length - 1] === metrics.last_sent_text) return prev;
-            return [...prev.slice(-4), metrics.last_sent_text as string];
-          });
-        }
-        return;
+        if (hasLiveFrame) setCommandStatus("Remote desktop active — click canvas to control.");
       }
 
       if (packet.type === "sys_ack" && typeof packet.message === "string" && packet.message) {
         setCommandStatus(packet.message);
       }
     });
-  }, [subscribe]);
+  }, [subscribe, hasLiveFrame]);
+
+  const sendPointer = useCallback(
+    (action: string, e: React.MouseEvent, extra: Record<string, unknown> = {}) => {
+      if (!controlEnabled || !isStreaming) return;
+      const mapped = mapPointerToRemote(e.clientX, e.clientY);
+      if (!mapped) return;
+      dispatchControl(action, { ...mapped, ...extra });
+    },
+    [controlEnabled, dispatchControl, isStreaming, mapPointerToRemote]
+  );
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    const now = Date.now();
+    if (now - moveThrottleRef.current < 33) return;
+    moveThrottleRef.current = now;
+    sendPointer("REMOTE_MOUSE_MOVE", e);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    canvasRef.current?.focus();
+    const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
+    sendPointer("REMOTE_MOUSE_DOWN", e, { button });
+  };
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
+    sendPointer("REMOTE_MOUSE_UP", e, { button });
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    sendPointer("REMOTE_MOUSE_WHEEL", e, { delta: Math.round(-e.deltaY) });
+  };
+
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (!controlEnabled || !isStreaming) return;
+    e.preventDefault();
+    const mapped = mapPointerToRemote(
+      (canvasRef.current?.getBoundingClientRect().left || 0) +
+        (canvasRef.current?.width || 0) / 2,
+      (canvasRef.current?.getBoundingClientRect().top || 0) +
+        (canvasRef.current?.height || 0) / 2
+    );
+    const base = mapped || {
+      x: Math.round(telemetry.screenWidth / 2),
+      y: Math.round(telemetry.screenHeight / 2),
+      screen_width: telemetry.screenWidth,
+      screen_height: telemetry.screenHeight,
+    };
+
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      dispatchControl(e.type === "keydown" ? "REMOTE_KEY_DOWN" : "REMOTE_KEY_UP", {
+        ...base,
+        text: e.key,
+      });
+      return;
+    }
+
+    dispatchControl(e.type === "keydown" ? "REMOTE_KEY_DOWN" : "REMOTE_KEY_UP", {
+      ...base,
+      code: e.code,
+    });
+  };
+
+  const handleQualityChange = (quality: StreamQuality) => {
+    setStreamQuality(quality);
+    streamQualityRef.current = quality;
+    try {
+      sessionStorage.setItem("zenvora_screen_quality", quality);
+    } catch {
+      // ignore
+    }
+
+    dispatchControl("SET_SCREEN_QUALITY", { quality });
+    if (isStreaming) {
+      resetPreview();
+      dispatchControl("START_SCREEN_STREAM", { quality });
+      setCommandStatus(`Quality set to ${quality} — refreshing stream...`);
+    } else {
+      setCommandStatus(`Quality set to ${quality}.`);
+    }
+  };
+
+  const handleDisplaySwitch = (displayId: string, index: number) => {
+    setActiveDisplay(displayId);
+    activeDisplayRef.current = displayId;
+    dispatchControl("SWITCH_DISPLAY", { display: displayId, display_index: index });
+    if (isStreaming) {
+      resetPreview();
+      setTimeout(
+        () => dispatchControl("START_SCREEN_STREAM", { quality: streamQualityRef.current }),
+        200
+      );
+    }
+  };
+
+  const handleSliderChange = (
+    param: "SET_DISPLAY_BRIGHTNESS" | "SET_SYSTEM_VOLUME",
+    value: number
+  ) => {
+    if (param === "SET_DISPLAY_BRIGHTNESS") setBrightness(value);
+    else setVolume(value);
+    if (sliderTimerRef.current) clearTimeout(sliderTimerRef.current);
+    sliderTimerRef.current = setTimeout(() => {
+      dispatchControl(param, { degree_value: value });
+    }, 150);
+  };
+
+  const toggleFullscreen = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void el.requestFullscreen();
+    }
+  };
+
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
 
   useEffect(() => {
     return () => {
       if (sliderTimerRef.current) clearTimeout(sliderTimerRef.current);
-      if (lastBlobUrlRef.current) URL.revokeObjectURL(lastBlobUrlRef.current);
     };
   }, []);
 
   return (
     <div className="flex h-screen bg-background">
-      <AppSidebar />
+      {!isFullscreen && <AppSidebar />}
 
-      <main className="flex-1 lg:ml-64 overflow-auto">
-        <div className="p-6 lg:p-12">
-          <div className="mb-8 flex justify-between items-start">
-            <div>
-              <h1 className="text-4xl lg:text-5xl font-display tracking-tight mb-2 flex items-center gap-3">
-                Screen Monitor
+      <main className={`flex flex-1 flex-col min-h-0 ${isFullscreen ? "w-screen" : "lg:ml-64"}`}>
+        {/* Header toolbar — matches dashboard / camera pages */}
+        <div className="border-b border-border bg-card/80 backdrop-blur px-4 py-3 lg:px-8 z-20">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <h1 className="text-xl lg:text-2xl font-display tracking-tight flex items-center gap-2">
+                Remote Desktop
                 <span
-                  className={`w-3 h-3 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`}
+                  className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                    isConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
+                  }`}
                 />
               </h1>
-              <p className="text-muted-foreground">
-                High-clarity remote desktop stream from the Rust agent
-              </p>
             </div>
+
+            <div className="min-w-[180px] flex-1 max-w-xs">
+              <Select<DeviceOption, false>
+                instanceId="screen-device-dropdown"
+                value={selectedDeviceOption}
+                onChange={(option) => {
+                  if (!option) return;
+                  stopStream();
+                  setSelectedDevice(option.value);
+                  selectedDeviceRef.current = option.value;
+                  setActiveDisplay("");
+                  activeDisplayRef.current = "";
+                }}
+                options={deviceOptions}
+                className="text-sm"
+                classNamePrefix="react-select"
+                placeholder="Select agent..."
+                isDisabled={!isConnected || deviceOptions.length === 0}
+              />
+            </div>
+
             <Button
-              variant="outline"
-              size="icon"
-              disabled={!canControl}
-              onClick={() => dispatchControl("FETCH_SCREEN_TELEMETRY", {})}
-              className="border-border hover:bg-accent/10"
+              size="sm"
+              disabled={!isConnected || isStreaming}
+              onClick={() => void probeAndStream()}
+              className="gap-1.5"
             >
-              <RefreshCw className="w-4 h-4" />
+              <Power className="h-3.5 w-3.5" /> Connect
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!isStreaming}
+              onClick={stopStream}
+              className="gap-1.5 border-border"
+            >
+              <X className="h-3.5 w-3.5" /> Stop
+            </Button>
+            <Button
+              size="sm"
+              variant={controlEnabled ? "default" : "outline"}
+              onClick={() => setControlEnabled((v) => !v)}
+              className={`gap-1.5 ${controlEnabled ? "bg-foreground text-background hover:bg-foreground/90" : "border-border"}`}
+            >
+              <MousePointer2 className="h-3.5 w-3.5" />
+              {controlEnabled ? "Control ON" : "Control OFF"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowPanel((v) => !v)}
+              className="border-border"
+            >
+              {showPanel ? <Minimize2 className="h-3.5 w-3.5" /> : <Settings className="h-3.5 w-3.5" />}
+            </Button>
+            <Button size="sm" variant="outline" onClick={toggleFullscreen} className="border-border">
+              <Maximize2 className="h-3.5 w-3.5" />
             </Button>
           </div>
 
-          <div className="mb-6 flex flex-col sm:flex-row gap-4">
-            <Select<DeviceOption, false>
-              instanceId="screen-device-dropdown"
-              value={selectedDeviceOption}
-              onChange={(option) => {
-                if (option) {
-                  setSelectedDevice(option.value);
-                  selectedDeviceRef.current = option.value;
-                  resetLivePreview();
-                  setDetectedDisplays([]);
-                  setActiveDisplay("");
-                  setIsStreaming(false);
-                }
-              }}
-              options={deviceOptions}
-              className="flex-1"
-              classNamePrefix="react-select"
-              placeholder={isConnected ? "Select live Rust agent..." : "Connecting..."}
-              isDisabled={!isConnected || deviceOptions.length === 0}
+          <p className="mt-2 text-xs text-muted-foreground font-mono truncate">{commandStatus}</p>
+        </div>
+
+        <div className="flex flex-1 min-h-0 p-4 lg:p-6 gap-4 lg:gap-6">
+          {/* Stream stage */}
+          <div className="flex flex-1 min-w-0 min-h-0">
+            <div
+              ref={containerRef}
+              className="relative flex flex-1 items-center justify-center overflow-hidden rounded-2xl border border-border bg-black shadow-2xl"
+            >
+            <canvas
+              ref={canvasRef}
+              tabIndex={0}
+              className={`h-full w-full max-h-full max-w-full object-contain outline-none ${
+                controlEnabled && isStreaming ? "cursor-none" : "cursor-default"
+              }`}
+              onMouseMove={handleMouseMove}
+              onMouseDown={handleMouseDown}
+              onMouseUp={handleMouseUp}
+              onContextMenu={(e) => e.preventDefault()}
+              onWheel={handleWheel}
+              onKeyDown={handleKey}
+              onKeyUp={handleKey}
             />
-          </div>
 
-          <div className="mb-6 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-            {commandStatus}
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mb-8">
-            <div className="xl:col-span-8 flex flex-col gap-6">
-              <div className="flex flex-wrap gap-3">
-                <Button
-  onClick={probeDisplays}
-  disabled={!canControl || scanningDisplays}
-  variant="outline"
-  className="gap-2 border-border hover:bg-accent/10"
->
-  <RefreshCw
-    className={`w-4 h-4 ${scanningDisplays ? "animate-spin" : ""}`}
-  />
-  {scanningDisplays ? "Scanning..." : "Scan Displays"}
-</Button>
-                
-               
-                <Button
-                  onClick={startScreenStream}
-                  disabled={!canControl || isStreaming}
-                  className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-                >
-                  <Power className="w-4 h-4" /> Start Stream
-                </Button>
-                <Button
-                  onClick={stopScreenStream}
-                  disabled={!canControl || !isStreaming}
-                  variant="outline"
-                  className="gap-2 border-border hover:bg-accent/10"
-                >
-                  <Power className="w-4 h-4" /> Stop Stream
-                </Button>
+            {!hasLiveFrame && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-zinc-900 to-black p-6 text-center">
+                <Monitor className="h-14 w-14 text-white/25 animate-pulse" />
+                <p className="text-white/80 text-sm">
+                  {isStreaming ? "Waiting for screen frames..." : "Select agent and click Connect"}
+                </p>
+                <p className="text-xs text-white/50 font-mono">{commandStatus}</p>
               </div>
+            )}
 
-              {detectedDisplays.length === 0 ? (
-                <Card className="border border-dashed border-border bg-card/40 p-6 text-sm text-muted-foreground">
-                  No displays scanned yet. Select your agent and click <strong>Scan Displays</strong>.
-                </Card>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {detectedDisplays.map((display) => (
+            {hasLiveFrame && (
+              <>
+                <div className="absolute top-4 right-4 z-30 rounded-full bg-red-600/90 px-3 py-1 text-xs font-mono font-bold text-white">
+                  LIVE • {measuredFps} FPS
+                </div>
+                <div className="absolute bottom-4 left-4 z-30 rounded-full bg-black/60 px-3 py-1 text-xs font-mono text-white backdrop-blur-sm">
+                  {telemetry.resolution} • {telemetry.displayName} • {frameCount} frames
+                </div>
+                {controlEnabled && (
+                  <div className="absolute bottom-4 right-4 z-30 rounded-full bg-emerald-600/85 px-3 py-1 text-xs font-mono text-white flex items-center gap-1">
+                    <Keyboard className="h-3 w-3" /> Click to type
+                  </div>
+                )}
+              </>
+            )}
+            </div>
+          </div>
+
+          {/* Side panel */}
+          {showPanel && (
+            <aside className="w-72 shrink-0 space-y-4 overflow-y-auto">
+              <Card className="p-4 border border-border bg-card">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="h-4 w-4 text-muted-foreground" />
+                  <Label className="text-sm font-semibold">Stream Quality</Label>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {QUALITY_OPTIONS.map((option) => (
                     <button
-                      key={display.id}
-                      onClick={() => handleDisplaySwitch(display)}
-                      disabled={!canControl}
-                      className={`p-4 rounded-lg border-2 transition-all text-left ${
-                        activeDisplay === display.id
-                          ? "border-foreground bg-accent/10"
-                          : "border-border bg-card hover:border-foreground/50"
-                      } disabled:cursor-not-allowed disabled:opacity-50`}
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleQualityChange(option.value)}
+                      className={`rounded-lg border px-2.5 py-2 text-left transition ${
+                        streamQuality === option.value
+                          ? "border-foreground bg-accent/30"
+                          : "border-border hover:border-foreground/40 bg-background"
+                      }`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="font-semibold">{display.label}</h3>
-                          <p className="text-sm text-muted-foreground mt-1">{display.resolution}</p>
-                        </div>
-                        <Monitor className="w-4 h-4 shrink-0" />
-                      </div>
-                      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{display.is_primary ? "Primary" : "Secondary"}</span>
-                        <span
-                          className={`rounded-full px-2 py-0.5 ${
-                            display.status === "ACTIVE"
-                              ? "bg-emerald-500/15 text-emerald-600"
-                              : "bg-accent/20"
-                          }`}
-                        >
-                          {display.status}
-                        </span>
-                      </div>
+                      <div className="text-sm font-medium">{option.label}</div>
+                      <div className="text-[10px] text-muted-foreground font-mono">{option.hint}</div>
                     </button>
                   ))}
                 </div>
-              )}
-
-              <div
-                ref={stageRef}
-                className="relative h-[62vh] min-h-[420px] w-full overflow-hidden rounded-2xl border border-border bg-black shadow-2xl"
-              >
-                <div className="absolute inset-0 z-10 flex h-full w-full items-center justify-center">
-                  <img
-                    ref={liveImgRef}
-                    alt="Live screen feed"
-                    className="max-h-full max-w-full object-contain"
-                    style={{ opacity: hasLiveFrame ? 1 : 0, imageRendering: "auto" }}
-                  />
-                </div>
-
-                {!hasLiveFrame && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 to-black p-6 text-center">
-                    <Monitor className="w-16 h-16 mb-4 text-white/30 animate-pulse" />
-                    <p className="text-white/70 mb-1">
-                      {isStreaming ? "Waiting for screen frames..." : "Stream off — click Start Stream"}
-                    </p>
-                    <p className="text-xs text-white/50 bg-white/10 px-3 py-1 rounded-full flex items-center gap-2 mt-2">
-                      <Cpu className="w-3 h-3" /> {selectedDevice || "No agent"} •{" "}
-                      {activeDisplayMeta?.label || "No display"} • Frames: {liveFrameCount}
-                    </p>
-                  </div>
-                )}
-
-                {hasLiveFrame && (
-                  <div className="absolute top-4 right-4 z-30 rounded-full bg-red-600/90 px-3 py-1 text-xs font-mono font-bold text-white">
-                    LIVE • {measuredFps !== "---" ? `${measuredFps} FPS` : liveFrameCount}
-                  </div>
-                )}
-
-                <div className="absolute bottom-4 left-4 z-30 rounded-full bg-black/60 px-3 py-1 text-xs font-mono text-white backdrop-blur-sm">
-                  {telemetry.resolution} • {telemetry.displayName}
-                </div>
-
-                {(typingPreview || sentInputs.length > 0) && (
-                  <div className="absolute bottom-14 left-4 right-4 z-30 space-y-2 pointer-events-none">
-                    {typingPreview && (
-                      <div className="rounded-xl border border-white/20 bg-black/75 px-4 py-3 text-white backdrop-blur-md shadow-lg">
-                        <p className="text-[10px] uppercase tracking-widest text-emerald-300 mb-1">
-                          Typing on remote screen
-                        </p>
-                        <p className="font-mono text-sm break-all">
-                          {typingPreview}
-                          <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-emerald-400 align-middle" />
-                        </p>
-                      </div>
-                    )}
-                    {sentInputs.slice(-3).map((line, index) => (
-                      <div
-                        key={`${line}-${index}`}
-                        className="rounded-lg border border-white/10 bg-black/60 px-3 py-2 text-white/90 backdrop-blur-sm"
-                      >
-                        <p className="text-[10px] uppercase tracking-widest text-white/50 mb-0.5">Sent</p>
-                        <p className="font-mono text-xs break-all">{line}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-wrap gap-3">
-                <Button
-  variant="outline"
-  disabled={!canControl || capturingScreenshot}
-  onClick={handleScreenshot}
-  className="border-border hover:bg-accent/10 gap-2"
->
-  <Download
-    className={`w-4 h-4 ${capturingScreenshot ? "animate-spin" : ""}`}
-  />
-  {capturingScreenshot ? "Capturing..." : "Screenshot"}
-</Button>
-                <Button
-                  variant="outline"
-                  disabled={!canControl || !isStreaming}
-                  onClick={() => {
-                    resetLivePreview();
-                    dispatchControl("START_SCREEN_STREAM", {});
-                  }}
-                  className="border-border hover:bg-accent/10 gap-2"
-                >
-                  <RotateCw className="w-4 h-4" /> Refresh
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={!hasLiveFrame}
-                  onClick={handleFullscreen}
-                  className="border-border hover:bg-accent/10 gap-2"
-                >
-                  <Maximize2 className="w-4 h-4" /> Fullscreen
-                </Button>
-              </div>
-            </div>
-
-            <div className="xl:col-span-4 grid gap-4 content-start">
-              <Card className="p-6 border border-border bg-card">
-                <h3 className="font-semibold mb-4 flex items-center justify-between">
-                  Stream Metrics
-                  <span className="text-xs font-mono bg-accent/20 text-muted-foreground px-2 py-0.5 rounded">
-                    {telemetry.status}
-                  </span>
-                </h3>
-                <div className="space-y-3 text-sm">
-                  <div className="flex justify-between border-b border-border/40 pb-2">
-                    <span className="text-muted-foreground">Resolution</span>
-                    <span className="font-mono font-semibold">{telemetry.resolution}</span>
-                  </div>
-                  <div className="flex justify-between border-b border-border/40 pb-2">
-                    <span className="text-muted-foreground">Target FPS</span>
-                    <span className="font-mono font-semibold">{telemetry.fps}</span>
-                  </div>
-                  <div className="flex justify-between border-b border-border/40 pb-2">
-                    <span className="text-muted-foreground">Measured FPS</span>
-                    <span className="font-mono font-semibold text-emerald-500">{measuredFps}</span>
-                  </div>
-                  <div className="flex justify-between border-b border-border/40 pb-2">
-                    <span className="text-muted-foreground">Bitrate</span>
-                    <span className="font-mono font-semibold">{telemetry.bitrate}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Latency</span>
-                    <span className="font-mono font-semibold">{telemetry.latency}</span>
-                  </div>
-                </div>
               </Card>
 
-              <Card className="p-6 border border-border bg-card">
-                <h3 className="font-semibold mb-4">Device Controls</h3>
-                <div className="space-y-6">
-                  <CustomSlider
-                    label="Brightness"
-                    min={0}
-                    max={100}
-                    value={brightness}
-                    onChange={(val) => handleSliderChange("SET_DISPLAY_BRIGHTNESS", val)}
-                    showValue
-                    unit="%"
-                  />
-                  <CustomSlider
-                    label="Volume"
-                    min={0}
-                    max={100}
-                    value={volume}
-                    onChange={(val) => handleSliderChange("SET_SYSTEM_VOLUME", val)}
-                    showValue
-                    unit="%"
-                  />
-
-                  <div className="border-t border-border pt-4 space-y-2">
-                    <Button
-                      variant="outline"
-                      disabled={!canControl}
-                      className="w-full border-border hover:bg-accent/10 justify-start gap-2"
-                      onClick={() => dispatchControl("LOCK_SCREEN", {})}
-                    >
-                      <Lock className="w-4 h-4" /> Lock Screen
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={!canControl}
-                      className="w-full border-border hover:bg-accent/10 justify-start gap-2"
-                      onClick={() => dispatchControl("OPEN_SETTINGS", {})}
-                    >
-                      <Settings className="w-4 h-4" /> Settings
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={!canControl}
-                      className="w-full border-border hover:bg-accent/10 justify-start gap-2"
-                      onClick={() =>
-                        setCommandStatus("Reboot is disabled on desktop agent for safety.")
-                      }
-                    >
-                      <RotateCw className="w-4 h-4" /> Reboot
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            </div>
-          </div>
-
-          <Card className="p-6 border border-border bg-card">
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <Volume2 className="w-4 h-4" /> Send Input
-            </h3>
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => {
-                  setInputText(e.target.value);
-                  setTypingPreview(e.target.value);
-                }}
-                onKeyDown={(e) => e.key === "Enter" && handleSendInput()}
-                placeholder="Type text to send to device..."
-                className="flex-1 px-4 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-foreground/20"
-              />
-              <Button
-                disabled={!canControl || !inputText.trim()}
-                onClick={handleSendInput}
-                className="bg-foreground hover:bg-foreground/90 text-background px-6"
-              >
-                Send
-              </Button>
-            </div>
-          </Card>
-
-          <div className="mt-12 border-t border-border pt-10">
-            <h2 className="text-2xl font-semibold tracking-tight mb-6 flex items-center gap-2">
-              <ImageIcon className="w-5 h-5 text-muted-foreground" /> Captured Media Buffer Gallery
-            </h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Loaded from database for agent <span className="font-mono">{selectedDevice || "—"}</span>. New screenshots appear here only after DB save.
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <Card className="p-6 border border-border bg-card/40 md:col-span-2">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium flex items-center gap-2">
-                    <Monitor className="w-4 h-4" /> Screen Screenshots ({capturedScreenshots.length})
-                  </h3>
+              <Card className="p-4 border border-border bg-card space-y-4">
+                <p className="text-xs uppercase tracking-widest text-muted-foreground font-mono">Displays</p>
+                {detectedDisplays.length === 0 ? (
                   <Button
-                    variant="outline"
                     size="sm"
-                    disabled={!canControl}
-                    onClick={() => loadServerGallery()}
-                    className="border-border hover:bg-accent/10 gap-2"
+                    variant="outline"
+                    className="w-full border-border"
+                    onClick={() => {
+                      dispatchControl("PROBE_DISPLAYS");
+                      dispatchControl("LIST_DISPLAYS");
+                    }}
                   >
-                    <Download className="w-4 h-4" /> Refresh Gallery
+                    <RefreshCw className="h-3.5 w-3.5 mr-1" /> Scan Displays
+                  </Button>
+                ) : (
+                  detectedDisplays.map((display) => (
+                    <button
+                      key={display.id}
+                      type="button"
+                      onClick={() => handleDisplaySwitch(display.id, display.index)}
+                      className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
+                        activeDisplay === display.id
+                          ? "border-foreground bg-accent/20"
+                          : "border-border hover:border-foreground/40"
+                      }`}
+                    >
+                      <div className="font-medium">{display.label}</div>
+                      <div className="text-xs text-muted-foreground">{display.resolution}</div>
+                    </button>
+                  ))
+                )}
+
+                <CustomSlider
+                  label="Brightness"
+                  min={0}
+                  max={100}
+                  value={brightness}
+                  onChange={(val) => handleSliderChange("SET_DISPLAY_BRIGHTNESS", val)}
+                  showValue
+                  unit="%"
+                />
+                <CustomSlider
+                  label="Volume"
+                  min={0}
+                  max={100}
+                  value={volume}
+                  onChange={(val) => handleSliderChange("SET_SYSTEM_VOLUME", val)}
+                  showValue
+                  unit="%"
+                />
+
+                <div className="space-y-2 pt-2 border-t border-border">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full justify-start border-border"
+                    onClick={() => dispatchControl("LOCK_SCREEN")}
+                  >
+                    <Lock className="h-3.5 w-3.5 mr-2" /> Lock Screen
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full justify-start border-border"
+                    onClick={() => dispatchControl("OPEN_SETTINGS")}
+                  >
+                    <Settings className="h-3.5 w-3.5 mr-2" /> Settings
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full justify-start border-border"
+                    onClick={() => {
+                      resetPreview();
+                      dispatchControl("START_SCREEN_STREAM", { quality: streamQualityRef.current });
+                    }}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5 mr-2" /> Refresh Stream
                   </Button>
                 </div>
-                {capturedScreenshots.length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic bg-accent/5 p-4 rounded-lg text-center">
-                    No screenshots in database for this agent yet.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 max-h-[360px] overflow-auto pr-1">
-                    {capturedScreenshots.map((photo) => (
-                      <div
-                        key={photo.id}
-                        className="group relative border border-border rounded-md overflow-hidden bg-black aspect-video flex items-center justify-center"
-                      >
-                        <img
-                          src={photo.url}
-                          alt="Screen capture"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                        />
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                          <Button
-                            size="icon"
-                            variant="secondary"
-                            className="h-8 w-8"
-                            onClick={() => downloadAsset(photo.url, `screen_${photo.id}.jpg`)}
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="destructive"
-                            className="h-8 w-8"
-                            onClick={() => clearGalleryItem(photo.id)}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                        <span className="absolute bottom-1 right-1 text-[10px] font-mono bg-black/70 px-1.5 py-0.5 rounded text-white">
-                          {photo.time}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </Card>
-            </div>
-          </div>
+
+              <Card className="p-4 border border-border bg-card/60 text-xs text-muted-foreground space-y-2">
+                <div className="flex justify-between">
+                  <span>Status</span>
+                  <span className="font-mono text-foreground">{telemetry.status}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Quality</span>
+                  <span className="font-mono capitalize">{streamQuality}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Target FPS</span>
+                  <span className="font-mono">{telemetry.fps}</span>
+                </div>
+                <div className="flex items-center gap-1 pt-1 text-[11px]">
+                  <Volume2 className="h-3 w-3 shrink-0" />
+                  <span>Mouse + keyboard control on the canvas</span>
+                </div>
+              </Card>
+            </aside>
+          )}
         </div>
       </main>
     </div>

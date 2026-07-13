@@ -10,58 +10,44 @@ import { useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useGateway } from "@/hooks/use-gateway";
 
-interface DashboardDevice {
-  id: string;
-  name: string;
-  model: string;
-  status: "online" | "offline";
-  battery: number | null;
-  storage: number | null;
-  lastSeen: string;
-  network: string;
-  role: string;
-  platform?: string;
-  localIp?: string;
-  publicIp?: string;
-}
-
-const fallbackDevices: DashboardDevice[] = [
-
-];
-
 export default function DashboardPage() {
-  const { devices: gatewayDevices, refreshDevices, socket } = useGateway();
+  const { devices: gatewayDevices, devicesLoading, refreshDevices } = useGateway();
   const router = useRouter();
   const [showPairModal, setShowPairModal] = useState(false);
   const [pairingToken, setPairingToken] = useState<string | null>(null);
   const [pairingUserId, setPairingUserId] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [openControlMenu, setOpenControlMenu] = useState<string | null>(null);
-const [loading, setLoading] = useState(true);
-useEffect(() => {
-  const loadDevices = async () => {
-    setLoading(true);
 
-    try {
-      await refreshDevices();
-    } finally {
-      setLoading(false);
-    }
-  };
+  const devices = useMemo(
+    () =>
+      gatewayDevices.map((device) => ({
+        id: device.value,
+        name: device.label || device.value,
+        model: device.platform || device.role || "Unknown",
+        status: device.status === "online" ? ("online" as const) : ("offline" as const),
+        battery: typeof device.battery === "number" ? device.battery : null,
+        storage: typeof device.storage === "number" ? device.storage : null,
+        lastSeen: device.lastSeen ? new Date(device.lastSeen).toLocaleString() : "now",
+        network: device.localIp ? "LAN" : device.publicIp ? "WAN" : "Unknown",
+        role: device.role || "AGENT",
+        platform: device.platform,
+        localIp: device.localIp,
+        publicIp: device.publicIp,
+      })),
+    [gatewayDevices]
+  );
 
-  void loadDevices();
+  const showSkeleton = devicesLoading && devices.length === 0;
 
-  const interval = setInterval(() => {
-    void refreshDevices();
-  }, 30000);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void refreshDevices();
+    }, 60_000);
 
-  return () => clearInterval(interval);
-}, []);
-// useEffect(() => {
-//   if (gatewayDevices.length > 0) {
-//     setLoading(false);
-//   }
-// }, [gatewayDevices]);
+    return () => clearInterval(interval);
+  }, [refreshDevices]);
+
   const loadSession = async () => {
     try {
       const response = await fetch("/api/auth/session", { credentials: "include" });
@@ -76,39 +62,6 @@ useEffect(() => {
     }
   };
 
-
-
- useEffect(() => {
-  if (!gatewayDevices.length) return;
-
-  setDevices(
-    gatewayDevices.map((device) => ({
-      id: device.value,
-      name: device.label || device.value,
-      model: device.platform || device.role || "Unknown",
-      status: device.status === "online" ? "online" : "offline",
-      battery:
-        typeof device.battery === "number" ? device.battery : null,
-      storage:
-        typeof device.storage === "number" ? device.storage : null,
-      lastSeen: device.lastSeen
-        ? new Date(device.lastSeen).toLocaleString()
-        : "now",
-      network: device.localIp
-        ? "LAN"
-        : device.publicIp
-        ? "WAN"
-        : "Unknown",
-      role: device.role || "AGENT",
-      platform: device.platform,
-      localIp: device.localIp,
-      publicIp: device.publicIp,
-    }))
-  );
-}, [gatewayDevices]);
-
-  const [devices, setDevices] = useState<DashboardDevice[]>(fallbackDevices);
-
   const onlineCount = devices.filter((device) => device.status === "online").length;
   const totalCount = devices.length;
   const averageBattery = Math.round(
@@ -120,10 +73,8 @@ useEffect(() => {
     <div className="flex h-screen bg-background">
       <AppSidebar />
 
-      {/* Main content */}
       <main className="flex-1 lg:ml-64 overflow-auto">
         <div className="p-6 lg:p-12">
-          {/* Header */}
           <div className="mb-12">
             <div className="flex items-end justify-between mb-4">
               <div>
@@ -147,267 +98,302 @@ useEffect(() => {
             </div>
           </div>
 
-          {/* Stats overview */}
-{loading ? (
-  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-    {[1, 2, 3].map((i) => (
-      <Card key={i} className="p-6">
-        <Skeleton className="h-4 w-24 mb-4" />
-        <Skeleton className="h-10 w-16" />
-      </Card>
-    ))}
-  </div>
-) : (
-   <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-            <Card className="p-6 border border-border bg-card hover-lift">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">Online Devices</p>
-                  <p className="text-3xl font-display">{onlineCount}</p>
+          {showSkeleton ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+              {[1, 2, 3].map((i) => (
+                <Card key={i} className="p-6">
+                  <Skeleton className="h-4 w-24 mb-4" />
+                  <Skeleton className="h-10 w-16" />
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+              <Card className="p-6 border border-border bg-card hover-lift">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">Online Devices</p>
+                    <p className="text-3xl font-display">{onlineCount}</p>
+                  </div>
+                  <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center">
+                    <Smartphone className="w-5 h-5 text-green-600" />
+                  </div>
                 </div>
-                <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center">
-                  <Smartphone className="w-5 h-5 text-green-600" />
+              </Card>
+
+              <Card className="p-6 border border-border bg-card hover-lift">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">Total Devices</p>
+                    <p className="text-3xl font-display">{totalCount}</p>
+                  </div>
+                  <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                    <Zap className="w-5 h-5 text-blue-600" />
+                  </div>
                 </div>
-              </div>
-            </Card>
+              </Card>
 
-            <Card className="p-6 border border-border bg-card hover-lift">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">Total Devices</p>
-                  <p className="text-3xl font-display">{totalCount}</p>
+              <Card className="p-6 border border-border bg-card hover-lift">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">Avg Battery</p>
+                    <p className="text-3xl font-display">{Number.isNaN(averageBattery) ? "—" : `${averageBattery}%`}</p>
+                  </div>
+                  <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
+                    <Battery className="w-5 h-5 text-orange-600" />
+                  </div>
                 </div>
-                <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                  <Zap className="w-5 h-5 text-blue-600" />
-                </div>
-              </div>
-            </Card>
+              </Card>
+            </div>
+          )}
 
-            <Card className="p-6 border border-border bg-card hover-lift">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">Avg Battery</p>
-                  <p className="text-3xl font-display">{Number.isNaN(averageBattery) ? "—" : `${averageBattery}%`}</p>
-                </div>
-                <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
-                  <Battery className="w-5 h-5 text-orange-600" />
-                </div>
-              </div>
-            </Card>
-          </div>
-)}
-
-
-
-        
-
-          {/* Devices list */}
           <div>
             <h2 className="text-xl font-display mb-6">Paired Devices</h2>
 
-<div className="space-y-4">
-  {loading ? (
-    [...Array(3)].map((_, i) => (
-      <Card key={i} className="p-6">
-        <div className="flex gap-4">
-          <Skeleton className="h-12 w-12 rounded-lg" />
-
-          <div className="flex-1">
-            <Skeleton className="h-5 w-48 mb-2" />
-            <Skeleton className="h-4 w-32 mb-6" />
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              {[1, 2, 3, 4].map((j) => (
-                <div key={j}>
-                  <Skeleton className="h-3 w-16 mb-2" />
-                  <Skeleton className="h-4 w-full" />
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-2">
-              <Skeleton className="h-9 w-24 rounded-md" />
-              <Skeleton className="h-9 w-24 rounded-md" />
-              <Skeleton className="h-9 w-28 rounded-md" />
-            </div>
-          </div>
-        </div>
-      </Card>
-    ))
-  ) : (
-    devices.map((device) => (
-        <Card
-                  key={device.id}
-                  className="p-6 border border-border bg-card hover:bg-accent/5 transition-colors"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="w-12 h-12 bg-sidebar rounded-lg flex items-center justify-center">
-                          {device.platform && (device.platform === 'android' || device.platform === 'android') ? (
-                            <Smartphone className="w-6 h-6" />
-                          ) : (device.platform && ['windows','mac','linux'].includes(String(device.platform).toLowerCase()) ? (
-                            <Laptop className="w-6 h-6" />
-                          ) : (
-                            <Smartphone className="w-6 h-6" />
+            <div className="space-y-4">
+              {showSkeleton ? (
+                [...Array(3)].map((_, i) => (
+                  <Card key={i} className="p-6">
+                    <div className="flex gap-4">
+                      <Skeleton className="h-12 w-12 rounded-lg" />
+                      <div className="flex-1">
+                        <Skeleton className="h-5 w-48 mb-2" />
+                        <Skeleton className="h-4 w-32 mb-6" />
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                          {[1, 2, 3, 4].map((j) => (
+                            <div key={j}>
+                              <Skeleton className="h-3 w-16 mb-2" />
+                              <Skeleton className="h-4 w-full" />
+                            </div>
                           ))}
                         </div>
-                        <div>
-                          <h3 className="font-semibold text-lg">{device.name}</h3>
-                          <p className="text-sm text-muted-foreground">
-                            {device.model} · {device.role}
-                          </p>
+                        <div className="flex gap-2">
+                          <Skeleton className="h-9 w-24 rounded-md" />
+                          <Skeleton className="h-9 w-24 rounded-md" />
+                          <Skeleton className="h-9 w-28 rounded-md" />
                         </div>
-                        <div className="ml-auto flex items-center gap-2">
-                          <div
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono ${
-                              device.status === "online"
-                                ? "bg-green-500/20 text-green-700"
-                                : "bg-gray-500/20 text-gray-700"
-                            }`}
-                          >
-                            <span
-                              className={`w-2 h-2 rounded-full ${
-                                device.status === "online" ? "bg-green-600" : "bg-gray-600"
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              ) : (
+                devices.map((device) => (
+                  <Card
+                    key={device.id}
+                    className="p-6 border border-border bg-card hover:bg-accent/5 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className="w-12 h-12 bg-sidebar rounded-lg flex items-center justify-center">
+                            {device.platform && (device.platform === "android" || device.platform === "android") ? (
+                              <Smartphone className="w-6 h-6" />
+                            ) : device.platform && ["windows", "mac", "linux"].includes(String(device.platform).toLowerCase()) ? (
+                              <Laptop className="w-6 h-6" />
+                            ) : (
+                              <Smartphone className="w-6 h-6" />
+                            )}
+                          </div>
+                          <div>
+                            <h3 className="font-semibold text-lg">{device.name}</h3>
+                            <p className="text-sm text-muted-foreground">
+                              {device.model} · {device.role}
+                            </p>
+                          </div>
+                          <div className="ml-auto flex items-center gap-2">
+                            <div
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono ${
+                                device.status === "online"
+                                  ? "bg-green-500/20 text-green-700"
+                                  : "bg-gray-500/20 text-gray-700"
                               }`}
-                            />
-                            {device.status === "online" ? "Online" : "Offline"}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Device info grid */}
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">Battery</p>
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-border rounded-full h-2">
-                              <div
-                                className={`h-full rounded-full ${
-                                  typeof device.battery === "number"
-                                    ? device.battery > 50
-                                      ? "bg-green-600"
-                                      : device.battery > 20
-                                      ? "bg-orange-600"
-                                      : "bg-red-600"
-                                    : "bg-gray-400"
+                            >
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  device.status === "online" ? "bg-green-600" : "bg-gray-600"
                                 }`}
-                                style={{ width: `${typeof device.battery === "number" ? device.battery : 0}%` }}
                               />
+                              {device.status === "online" ? "Online" : "Offline"}
                             </div>
-                            <span className="text-sm font-mono">
-                              {typeof device.battery === "number" ? `${device.battery}%` : "N/A"}
-                            </span>
                           </div>
                         </div>
 
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">Storage</p>
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-border rounded-full h-2">
-                              <div
-                                className="h-full rounded-full bg-blue-600"
-                                style={{ width: `${typeof device.storage === "number" ? device.storage : 0}%` }}
-                              />
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-1">Battery</p>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-border rounded-full h-2">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    typeof device.battery === "number"
+                                      ? device.battery > 50
+                                        ? "bg-green-600"
+                                        : device.battery > 20
+                                          ? "bg-orange-600"
+                                          : "bg-red-600"
+                                      : "bg-gray-400"
+                                  }`}
+                                  style={{ width: `${typeof device.battery === "number" ? device.battery : 0}%` }}
+                                />
+                              </div>
+                              <span className="text-sm font-mono">
+                                {typeof device.battery === "number" ? `${device.battery}%` : "N/A"}
+                              </span>
                             </div>
-                            <span className="text-sm font-mono">
-                              {typeof device.storage === "number" ? `${device.storage}%` : "N/A"}
-                            </span>
+                          </div>
+
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-1">Storage</p>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-border rounded-full h-2">
+                                <div
+                                  className="h-full rounded-full bg-blue-600"
+                                  style={{ width: `${typeof device.storage === "number" ? device.storage : 0}%` }}
+                                />
+                              </div>
+                              <span className="text-sm font-mono">
+                                {typeof device.storage === "number" ? `${device.storage}%` : "N/A"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-1">Network</p>
+                            <div className="flex items-center gap-1.5">
+                              <Wifi className="w-4 h-4" />
+                              <span className="text-sm font-mono">{device.network}</span>
+                            </div>
+                          </div>
+
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-1">Last Seen</p>
+                            <p className="text-sm font-mono">{device.lastSeen}</p>
                           </div>
                         </div>
 
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">Network</p>
-                          <div className="flex items-center gap-1.5">
-                            <Wifi className="w-4 h-4" />
-                            <span className="text-sm font-mono">{device.network}</span>
+                        <div className="flex flex-wrap gap-2">
+                          <div className="relative">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-border hover:bg-accent/10"
+                              onClick={() => setOpenControlMenu(openControlMenu === device.id ? null : device.id)}
+                            >
+                              <Eye className="w-4 h-4 mr-2" />
+                              Control
+                            </Button>
+                            {openControlMenu === device.id && (
+                              <div className="absolute right-0 mt-2 w-40 bg-card border border-border rounded shadow-sm z-40">
+                                <button
+                                  className="w-full text-left px-3 py-2 hover:bg-accent/10"
+                                  onClick={() => {
+                                    setOpenControlMenu(null);
+                                    router.push(`/camera?device=${device.id}`);
+                                  }}
+                                >
+                                  Camera
+                                </button>
+                                <button
+                                  className="w-full text-left px-3 py-2 hover:bg-accent/10"
+                                  onClick={() => {
+                                    setOpenControlMenu(null);
+                                    router.push(`/screen?device=${device.id}`);
+                                  }}
+                                >
+                                  Screen
+                                </button>
+                              </div>
+                            )}
                           </div>
-                        </div>
 
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">Last Seen</p>
-                          <p className="text-sm font-mono">{device.lastSeen}</p>
-                        </div>
-                      </div>
-
-                      {/* Action buttons */}
-                      <div className="flex flex-wrap gap-2">
-                        <div className="relative">
                           <Button
                             variant="outline"
                             size="sm"
                             className="border-border hover:bg-accent/10"
-                            onClick={() => setOpenControlMenu(openControlMenu === device.id ? null : device.id)}
+                            onClick={() => router.push(`/files?device=${device.id}`)}
                           >
-                            <Eye className="w-4 h-4 mr-2" />
-                            Control
+                            <FileText className="w-4 h-4 mr-2" />
+                            Files
                           </Button>
-                          {openControlMenu === device.id && (
-                            <div className="absolute right-0 mt-2 w-40 bg-card border border-border rounded shadow-sm z-40">
-                              <button className="w-full text-left px-3 py-2 hover:bg-accent/10" onClick={() => { setOpenControlMenu(null); router.push(`/camera?device=${device.id}`); }}>
-                                Camera
-                              </button>
-                              <button className="w-full text-left px-3 py-2 hover:bg-accent/10" onClick={() => { setOpenControlMenu(null); router.push(`/screen?device=${device.id}`); }}>
-                                Screen
-                              </button>
-                            </div>
-                          )}
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-border hover:bg-accent/10"
+                            onClick={() => router.push(`/screenshot?device=${device.id}`)}
+                          >
+                            Screenshot
+                          </Button>
                         </div>
+                      </div>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="border-border hover:bg-accent/10"
-                          onClick={() => router.push(`/files?device=${device.id}`)}
+                      <div className="relative">
+                        <button
+                          className="p-2 hover:bg-accent/10 rounded-lg transition-colors"
+                          onClick={() => setOpenMenu(openMenu === device.id ? null : device.id)}
                         >
-                          <FileText className="w-4 h-4 mr-2" />
-                          Files
-                        </Button>
-
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="border-border hover:bg-accent/10"
-                          onClick={() => router.push(`/screenshot?device=${device.id}`)}
-                        >
-                          Screenshot
-                        </Button>
+                          <MoreVertical className="w-4 h-4" />
+                        </button>
+                        {openMenu === device.id && (
+                          <div className="absolute right-0 mt-2 w-44 bg-card border border-border rounded shadow-sm z-50">
+                            <button
+                              className="w-full text-left px-3 py-2 hover:bg-accent/10"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                router.push(`/files?device=${device.id}`);
+                              }}
+                            >
+                              Files
+                            </button>
+                            <button
+                              className="w-full text-left px-3 py-2 hover:bg-accent/10"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                router.push(`/camera?device=${device.id}`);
+                              }}
+                            >
+                              Camera
+                            </button>
+                            <button
+                              className="w-full text-left px-3 py-2 hover:bg-accent/10"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                router.push(`/screen?device=${device.id}`);
+                              }}
+                            >
+                              Screen
+                            </button>
+                            <button
+                              className="w-full text-left px-3 py-2 hover:bg-accent/10"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                router.push(`/logs?device=${device.id}`);
+                              }}
+                            >
+                              Activity
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
-
-                    <div className="relative">
-                      <button className="p-2 hover:bg-accent/10 rounded-lg transition-colors" onClick={() => setOpenMenu(openMenu === device.id ? null : device.id)}>
-                        <MoreVertical className="w-4 h-4" />
-                      </button>
-                      {openMenu === device.id && (
-                        <div className="absolute right-0 mt-2 w-44 bg-card border border-border rounded shadow-sm z-50">
-                          <button className="w-full text-left px-3 py-2 hover:bg-accent/10" onClick={() => { setOpenMenu(null); router.push(`/files?device=${device.id}`); }}>Files</button>
-                          <button className="w-full text-left px-3 py-2 hover:bg-accent/10" onClick={() => { setOpenMenu(null); router.push(`/camera?device=${device.id}`); }}>Camera</button>
-                          <button className="w-full text-left px-3 py-2 hover:bg-accent/10" onClick={() => { setOpenMenu(null); router.push(`/screen?device=${device.id}`); }}>Screen</button>
-                          <button className="w-full text-left px-3 py-2 hover:bg-accent/10" onClick={() => { setOpenMenu(null); router.push(`/logs?device=${device.id}`); }}>Activity</button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </Card>
-    ))
-  )}
-</div>
-
-
-          
+                  </Card>
+                ))
+              )}
+            </div>
           </div>
-             {!loading && devices.length === 0 && (
-  <Card className="p-12 text-center">
-    <p className="text-muted-foreground">
-      No paired devices found.
-    </p>
-  </Card>
-)}
+
+          {!showSkeleton && devices.length === 0 && (
+            <Card className="p-12 text-center">
+              <p className="text-muted-foreground">No paired devices found.</p>
+            </Card>
+          )}
         </div>
 
         <Dialog open={showPairModal} onOpenChange={setShowPairModal}>
-          <DialogContent showCloseButton={false} className="w-[min(95vw,1200px)] max-w-[1200px] h-[90vh] overflow-hidden rounded-[1.5rem] border border-border bg-background shadow-2xl">
+          <DialogContent
+            showCloseButton={false}
+            className="w-[min(95vw,1200px)] max-w-[1200px] h-[90vh] overflow-hidden rounded-[1.5rem] border border-border bg-background shadow-2xl"
+          >
             <div className="absolute top-4 right-4">
               <DialogClose asChild>
                 <Button variant="ghost" size="icon" className="rounded-full p-2">
@@ -431,27 +417,45 @@ useEffect(() => {
                     <p>This is the Android Software Development Kit License Agreement.</p>
                     <div>
                       <h4 className="font-semibold text-foreground">1. Introduction</h4>
-                      <p>The Android Software Development Kit is licensed to you subject to the terms of this agreement. The agreement forms a legally binding contract between you and Google in relation to your use of the SDK.</p>
+                      <p>
+                        The Android Software Development Kit is licensed to you subject to the terms of this agreement. The
+                        agreement forms a legally binding contract between you and Google in relation to your use of the SDK.
+                      </p>
                     </div>
                     <div>
                       <h4 className="font-semibold text-foreground">2. Accepting this License Agreement</h4>
-                      <p>To use the SDK, you must first agree to the license agreement. By using the SDK, you acknowledge that you accept these terms and agree to comply with them.</p>
+                      <p>
+                        To use the SDK, you must first agree to the license agreement. By using the SDK, you acknowledge that
+                        you accept these terms and agree to comply with them.
+                      </p>
                     </div>
                     <div>
                       <h4 className="font-semibold text-foreground">3. SDK License from Google</h4>
-                      <p>Google grants you a limited, worldwide, non-exclusive license to use the SDK solely to develop applications for compatible implementations of Android.</p>
+                      <p>
+                        Google grants you a limited, worldwide, non-exclusive license to use the SDK solely to develop
+                        applications for compatible implementations of Android.
+                      </p>
                     </div>
                     <div>
                       <h4 className="font-semibold text-foreground">4. Use of the SDK by You</h4>
-                      <p>You agree to use the SDK only for permitted purposes and in compliance with applicable laws, privacy expectations, and Google’s policies.</p>
+                      <p>
+                        You agree to use the SDK only for permitted purposes and in compliance with applicable laws, privacy
+                        expectations, and Google’s policies.
+                      </p>
                     </div>
                     <div>
                       <h4 className="font-semibold text-foreground">5. Privacy and Information</h4>
-                      <p>Google may collect usage statistics and other information to improve the SDK. Any such data collection is managed under Google’s privacy policy.</p>
+                      <p>
+                        Google may collect usage statistics and other information to improve the SDK. Any such data collection
+                        is managed under Google’s privacy policy.
+                      </p>
                     </div>
                     <div>
                       <h4 className="font-semibold text-foreground">6. General Legal Terms</h4>
-                      <p>The agreement is governed by the laws of the State of California, and you agree to submit to the exclusive jurisdiction of courts located in Santa Clara County, California.</p>
+                      <p>
+                        The agreement is governed by the laws of the State of California, and you agree to submit to the
+                        exclusive jurisdiction of courts located in Santa Clara County, California.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -470,11 +474,6 @@ useEffect(() => {
                       </div>
                     </div>
                   </div>
-
-                  {/* <label className="inline-flex items-center gap-3 text-sm text-muted-foreground">
-                    <input type="checkbox" className="h-4 w-4 rounded border-border text-foreground focus:ring-foreground" />
-                    I have read and agree with the above terms and conditions.
-                  </label> */}
                 </div>
               </div>
 
@@ -494,7 +493,6 @@ useEffect(() => {
             </div>
           </DialogContent>
         </Dialog>
-     
       </main>
     </div>
   );

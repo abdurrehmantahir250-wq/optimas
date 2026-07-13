@@ -3,9 +3,14 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  optimizeFonts: false,
   images: {
     unoptimized: true,
   },
-}
 
-export default nextConfig
+  allowedDevOrigins: [
+    "https://app.javehandmade.store",
+  ],
+};
+
+export default nextConfig;
