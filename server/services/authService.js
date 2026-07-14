@@ -334,12 +334,19 @@ async function createAgentCredential(userId, deviceId, label = 'My Agent') {
 }
 
 async function verifyAgentToken(deviceId, agentToken) {
-    const cred = await AgentCredential.findOne({ deviceId: String(deviceId || '').trim() });
-    if (!cred || !agentToken) return null;
+    const cred = await AgentCredential.findOne({ deviceId: String(deviceId || '').trim() })
+        .maxTimeMS(5000)
+        .lean();
+    if (!cred || !agentToken || !cred.tokenHash) return null;
     const ok = await bcrypt.compare(String(agentToken), cred.tokenHash);
     if (!ok) return null;
-    cred.lastConnectedAt = new Date();
-    await cred.save();
+
+    // Fire-and-forget lastConnectedAt update so WS upgrade is not blocked.
+    AgentCredential.updateOne(
+        { _id: cred._id },
+        { $set: { lastConnectedAt: new Date() } }
+    ).catch(() => {});
+
     return cred;
 }
 async function pairAgent(body) {
