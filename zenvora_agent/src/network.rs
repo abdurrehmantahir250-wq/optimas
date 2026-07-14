@@ -46,12 +46,22 @@ use crate::ui_notify;
 const SCREEN_FRAME_INTERVAL_MS: u64 = 50;
 const CAMERA_FRAME_INTERVAL_MS: u64 = 200;
 const HANDSHAKE_TIMEOUT_SECS: u64 = 15;
-const CONNECT_TIMEOUT_SECS: u64 = 35;
+const CONNECT_TIMEOUT_SECS: u64 = 45;
 const NETWORK_WAIT_SECS: u64 = 15;
 const MAX_BACKOFF_SECS: u64 = 30;
 const HEARTBEAT_INTERVAL_SECS: u64 = 20;
 const HEARTBEAT_TIMEOUT_SECS: u64 = 65;
 const SLEEP_JUMP_SECS: u64 = 40;
+/// Transient connect/handshake failures only become final after this many tries.
+const FINAL_FAIL_AFTER_ATTEMPTS: u32 = 5;
+
+fn report_transient_or_final(config: &AgentConfig, reconnect_attempt: u32, message: &str) {
+    if reconnect_attempt + 1 >= FINAL_FAIL_AFTER_ATTEMPTS {
+        connection_status::report_failed(message);
+    } else {
+        connection_status::report_connecting(&config.device_id, &config.gateway_url);
+    }
+}
 
 fn running_in_console_mode() -> bool {
     std::env::args().any(|arg| arg == "--console")
@@ -384,9 +394,7 @@ pub async fn run_network_loop(
 
         if !wait_for_network_ready(NETWORK_WAIT_SECS).await {
             let message = "Network not ready. Check internet connection.".to_string();
-            if reconnect_attempt == 0 {
-                connection_status::report_failed(&message);
-            }
+            report_transient_or_final(config, reconnect_attempt, &message);
             connection_status::log(&message);
             sleep(Duration::from_secs(5)).await;
             reconnect_attempt = reconnect_attempt.saturating_add(1);
@@ -396,9 +404,7 @@ pub async fn run_network_loop(
         let url = match build_gateway_url(config) {
             Ok(url) => url,
             Err(err) => {
-                if reconnect_attempt == 0 {
-                    connection_status::report_failed(&err);
-                }
+                report_transient_or_final(config, reconnect_attempt, &err);
                 connection_status::log(&err);
                 sleep(Duration::from_secs(5)).await;
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
@@ -411,6 +417,7 @@ pub async fn run_network_loop(
             reconnect_attempt + 1,
             config.gateway_url
         ));
+        connection_status::report_connecting(&config.device_id, &config.gateway_url);
 
         let connect_result = timeout(
             Duration::from_secs(CONNECT_TIMEOUT_SECS),
@@ -442,9 +449,7 @@ pub async fn run_network_loop(
                     .is_err()
                 {
                     let message = "Failed to send registration packet.".to_string();
-                    if reconnect_attempt == 0 {
-                        connection_status::report_failed(&message);
-                    }
+                    report_transient_or_final(config, reconnect_attempt, &message);
                     connection_status::log(&message);
                     sleep(Duration::from_secs(3)).await;
                     reconnect_attempt = reconnect_attempt.saturating_add(1);
@@ -472,6 +477,7 @@ pub async fn run_network_loop(
                         );
                     }
                     Err(failure) => {
+                        let is_auth = matches!(failure, ConnectFailure::Auth);
                         let message = match failure {
                             ConnectFailure::HandshakeTimeout => {
                                 "Gateway did not confirm registration in time.".to_string()
@@ -481,8 +487,10 @@ pub async fn run_network_loop(
                                 "Gateway rejected agent credentials.".to_string()
                             }
                         };
-                        if reconnect_attempt == 0 {
+                        if is_auth {
                             connection_status::report_failed(&message);
+                        } else {
+                            report_transient_or_final(config, reconnect_attempt, &message);
                         }
                         connection_status::log(format!("Handshake failed: {}", message));
                         show_console_result(
@@ -744,11 +752,11 @@ pub async fn run_network_loop(
             }
             Ok(Err(err)) => {
                 let message = format!("Connection failed: {}", err);
-                if reconnect_attempt == 0 {
-                    connection_status::report_failed(&message);
+                report_transient_or_final(config, reconnect_attempt, &message);
+                connection_status::log(&message);
+                if reconnect_attempt + 1 >= FINAL_FAIL_AFTER_ATTEMPTS {
                     show_console_result("Zenvora Agent - Connection Failed", &message, false);
                 }
-                connection_status::log(&message);
 
                 if is_auth_failure(&err) {
                     // Service Session 0 cannot show pairing dialogs — fail clearly.
@@ -777,11 +785,11 @@ pub async fn run_network_loop(
                     "Gateway connection timed out after {}s ({})",
                     CONNECT_TIMEOUT_SECS, config.gateway_url
                 );
-                if reconnect_attempt == 0 {
-                    connection_status::report_failed(&message);
+                report_transient_or_final(config, reconnect_attempt, &message);
+                connection_status::log(&message);
+                if reconnect_attempt + 1 >= FINAL_FAIL_AFTER_ATTEMPTS {
                     show_console_result("Zenvora Agent - Connection Failed", &message, false);
                 }
-                connection_status::log(&message);
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                 sleep(Duration::from_secs(5)).await;
             }

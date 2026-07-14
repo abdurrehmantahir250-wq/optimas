@@ -32,12 +32,14 @@ function normalizeAppType(value) {
 }
 
 async function syncBrowserHistory(deviceId, entries, userId = null) {
-    if (!deviceId || !Array.isArray(entries)) {
+    if (!deviceId || !Array.isArray(entries) || !userId) {
         return { count: 0 };
     }
 
-    await BrowserHistory.deleteMany({ deviceId });
-    if (entries.length === 0) return { count: 0 };
+    if (entries.length === 0) {
+        // Never wipe existing history on an empty scrape (Session 0 / locked DBs).
+        return { count: 0 };
+    }
 
     const docs = entries.map((entry) => ({
         deviceId,
@@ -51,17 +53,20 @@ async function syncBrowserHistory(deviceId, entries, userId = null) {
     })).filter((doc) => doc.url);
 
     if (docs.length === 0) return { count: 0 };
+
+    await BrowserHistory.deleteMany({ deviceId, userId });
     await BrowserHistory.insertMany(docs, { ordered: false });
     return { count: docs.length };
 }
 
 async function syncAppHistory(deviceId, entries, userId = null) {
-    if (!deviceId || !Array.isArray(entries)) {
+    if (!deviceId || !Array.isArray(entries) || !userId) {
         return { count: 0 };
     }
 
-    await AppHistory.deleteMany({ deviceId });
-    if (entries.length === 0) return { count: 0 };
+    if (entries.length === 0) {
+        return { count: 0 };
+    }
 
     const docs = entries.map((entry) => ({
         deviceId,
@@ -73,6 +78,7 @@ async function syncAppHistory(deviceId, entries, userId = null) {
         category: entry.category ? String(entry.category) : undefined
     }));
 
+    await AppHistory.deleteMany({ deviceId, userId });
     await AppHistory.insertMany(docs, { ordered: false });
     return { count: docs.length };
 }

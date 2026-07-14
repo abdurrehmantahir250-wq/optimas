@@ -25,7 +25,7 @@ function extractDeviceIdFromAgentSocket(ws) {
     return '';
 }
 
-function broadcastHistoryTelemetry(deviceId, payload, activeConnections) {
+function broadcastHistoryTelemetry(deviceId, payload, activeConnections, ownerUserId = null) {
     const message = JSON.stringify({
         type: 'history_telemetry',
         deviceId,
@@ -34,9 +34,12 @@ function broadcastHistoryTelemetry(deviceId, payload, activeConnections) {
     });
 
     activeConnections.forEach((clientSocket, key) => {
-        if (key.startsWith('DASHBOARD_') && clientSocket.readyState === 1) {
-            clientSocket.send(message);
+        if (!(key.startsWith('DASHBOARD_') && clientSocket.readyState === 1)) return;
+        if (ownerUserId) {
+            const dashUserId = clientSocket?.authContext?.user?.id || clientSocket?.authContext?.userId;
+            if (String(dashUserId || '') !== String(ownerUserId)) return;
         }
+        clientSocket.send(message);
     });
 }
 
@@ -45,6 +48,10 @@ async function handleHistoryAgentResponse(ws, packet, activeConnections) {
     const userId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
     if (!deviceId) {
         console.warn('[HISTORY] Agent response ignored — missing device id');
+        return;
+    }
+    if (!userId) {
+        console.warn(`[HISTORY] Agent response ignored for ${deviceId} — missing userId (multi-user isolation)`);
         return;
     }
 
@@ -57,14 +64,14 @@ async function handleHistoryAgentResponse(ws, packet, activeConnections) {
             count: result.count,
             entries: Array.isArray(packet.data) ? packet.data : Array.isArray(packet.entries) ? packet.entries : [],
             syncedAt: new Date().toISOString()
-        }, activeConnections);
+        }, activeConnections, userId);
     } catch (error) {
         console.error('[HISTORY] Persist failed:', error.message);
         broadcastHistoryTelemetry(deviceId, {
             command: packet.command,
             error: error.message,
             success: false
-        }, activeConnections);
+        }, activeConnections, userId);
     }
 }
 

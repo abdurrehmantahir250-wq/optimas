@@ -24,6 +24,7 @@ mod service;
 mod ui_notify;
 mod input;
 mod connection_status;
+mod session_launch;
 
 use std::env;
 use std::fs;
@@ -178,14 +179,28 @@ fn bootstrap_service_and_report() {
         return;
     }
 
-    if let Some(status) = wait_for_connection_report(75) {
+    if let Some(status) = wait_for_connection_report(150) {
         show_connection_report(&status);
         return;
     }
 
+    // Keep waiting a bit more if agent is still retrying ("connecting").
+    if let Some(status) = connection_status::read_status() {
+        if status.starts_with("connecting|") {
+            if let Some(final_status) = wait_for_connection_report(60) {
+                show_connection_report(&final_status);
+                return;
+            }
+        }
+        if connection_status::is_final_status(&status) {
+            show_connection_report(&status);
+            return;
+        }
+    }
+
     ui_notify::show_blocking_warning(
         "Zenvora Agent",
-        "Agent started but gateway connection was not confirmed within 75 seconds.\nCheck internet / pair token and try again.",
+        "Agent is still connecting in background.\nIf this keeps failing, check Railway deployment and internet.",
     );
 }
 

@@ -50,7 +50,7 @@ router.get('/devices/:deviceId', attachUser, requireUserIdOwnership, requireDevi
 
 router.get('/live-agents', attachUser, requireUserIdOwnership, async (req, res) => {
     try {
-        const liveDevices = getLiveDeviceOptions();
+        const liveDevices = getLiveDeviceOptions(req.user.id);
         const liveDeviceIds = new Set(liveDevices.map((device) => device.value));
         const deviceRecords = await Device.find({ userId: req.user.id }).sort({ lastSeen: -1 }).lean();
 

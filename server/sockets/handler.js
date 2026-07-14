@@ -597,6 +597,7 @@ async function handleDeviceStatusUpdate(ws, packet, activeConnections) {
         return;
     }
 
+    const ownerUserId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
     const metrics = packet.hardware_metrics || {};
     const geo = packet.geolocation || metrics.geolocation || {};
 
@@ -706,31 +707,36 @@ async function handleDeviceStatusUpdate(ws, packet, activeConnections) {
         : new Date();
 
     try {
+        const update = {
+            status,
+            platform,
+            localIp,
+            publicIp,
+            battery,
+            storage,
+            network,
+            latitude,
+            longitude,
+            country,
+            region,
+            city,
+            isp,
+            timezone,
+            hostname,
+            username,
+            osVersion,
+            architecture,
+            cpu,
+            ram,
+            lastSeen,
+        };
+        if (ownerUserId) {
+            update.userId = ownerUserId;
+        }
+
         await Device.findOneAndUpdate(
-            { deviceId },
-            {
-                status,
-                platform,
-                localIp,
-                publicIp,
-                battery,
-                storage,
-                network,
-                latitude,
-                longitude,
-                country,
-                region,
-                city,
-                isp,
-                timezone,
-                hostname,
-                username,
-                osVersion,
-                architecture,
-                cpu,
-                ram,
-                lastSeen,
-            },
+            ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId },
+            update,
             {
                 new: true,
                 upsert: true,
@@ -766,9 +772,12 @@ async function handleDeviceStatusUpdate(ws, packet, activeConnections) {
         });
 
         activeConnections.forEach((clientSocket, key) => {
-            if (key.startsWith("DASHBOARD_") && clientSocket.readyState === 1) {
-                clientSocket.send(message);
+            if (!(key.startsWith("DASHBOARD_") && clientSocket.readyState === 1)) return;
+            if (ownerUserId) {
+                const dashUserId = clientSocket?.authContext?.user?.id || clientSocket?.authContext?.userId;
+                if (String(dashUserId || '') !== String(ownerUserId)) return;
             }
+            clientSocket.send(message);
         });
 
     } catch (err) {
@@ -779,6 +788,7 @@ async function persistHardwareMetrics(ws, packet, activeConnections) {
     const deviceId = extractDeviceIdFromAgentSocket(ws);
     if (!deviceId) return;
 
+    const ownerUserId = ws?.authContext?.userId || ws?.authContext?.user?.id || null;
     const metrics = packet.hardware_metrics || {};
     const battery = typeof metrics.battery === 'number' ? metrics.battery : (typeof metrics.battery_level === 'number' ? metrics.battery_level : null);
     const storage = typeof metrics.storage === 'number' ? metrics.storage : (typeof metrics.storage_percent === 'number' ? metrics.storage_percent : null);
@@ -789,17 +799,22 @@ async function persistHardwareMetrics(ws, packet, activeConnections) {
     const lastSeen = packet.timestamp ? new Date(Number(packet.timestamp) * 1000) : new Date();
 
     try {
+        const update = {
+            battery,
+            storage,
+            localIp,
+            publicIp,
+            platform,
+            status,
+            lastSeen,
+        };
+        if (ownerUserId) {
+            update.userId = ownerUserId;
+        }
+
         await Device.findOneAndUpdate(
-            { deviceId },
-            {
-                battery,
-                storage,
-                localIp,
-                publicIp,
-                platform,
-                status,
-                lastSeen,
-            },
+            ownerUserId ? { deviceId, userId: ownerUserId } : { deviceId },
+            update,
             { new: true, upsert: true }
         );
 

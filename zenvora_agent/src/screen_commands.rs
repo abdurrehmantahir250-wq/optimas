@@ -218,7 +218,11 @@ pub fn handle_screen_command(
             None => {
                 eprintln!("[SCREEN] Capture failed for action {}", packet.action);
                 if action_message.is_none() {
-                    action_message = Some("Screen capture failed on this display.".into());
+                    action_message = Some(if crate::session_launch::is_session_zero() {
+                        "Screen capture unavailable: agent is in Session 0. Reinstall/restart the agent while a user is logged in so it can run in the interactive session.".into()
+                    } else {
+                        "Screen capture failed on this display.".into()
+                    });
                 }
                 None
             }

@@ -69,6 +69,42 @@ fn run_service() -> windows_service::Result<()> {
 
     let stop_flag_for_thread = stop_flag.clone();
     thread::spawn(move || {
+        // Prefer running the agent in the interactive user session so screen +
+        // browser history work. Fall back to in-service process if that fails.
+        let exe = env::current_exe().ok();
+        if crate::session_launch::is_session_zero() {
+            if let Some(exe_path) = exe.as_ref() {
+                loop {
+                    if rx.try_recv().is_ok() || stop_flag_for_thread.load(Ordering::SeqCst) {
+                        return;
+                    }
+
+                    match crate::session_launch::spawn_agent_in_active_user_session(
+                        exe_path,
+                        &stop_flag_for_thread,
+                    ) {
+                        Ok(()) => {
+                            crate::connection_status::log(
+                                "Interactive agent exited; will relaunch if service is still running.",
+                            );
+                            if stop_flag_for_thread.load(Ordering::SeqCst) {
+                                return;
+                            }
+                            thread::sleep(Duration::from_secs(3));
+                            continue;
+                        }
+                        Err(err) => {
+                            crate::connection_status::log(format!(
+                                "Interactive session launch failed ({}); falling back to service process.",
+                                err
+                            ));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         loop {
             if rx.try_recv().is_ok() || stop_flag_for_thread.load(Ordering::SeqCst) {
                 break;

@@ -20,95 +20,156 @@ impl BrowserHistoryCollector {
     pub fn collect_all_history() -> Vec<BrowserHistory> {
         let mut all_history = Vec::new();
 
-        // Collect Chrome history
-        all_history.extend(Self::collect_chrome_history());
+        for local_app_data in Self::local_app_data_roots() {
+            all_history.extend(Self::collect_chrome_history_from(&local_app_data));
+            all_history.extend(Self::collect_edge_history_from(&local_app_data));
+        }
 
-        // Collect Edge history
-        all_history.extend(Self::collect_edge_history());
+        for app_data in Self::roaming_app_data_roots() {
+            all_history.extend(Self::collect_firefox_history_from(&app_data));
+        }
 
-        // Collect Firefox history
-        all_history.extend(Self::collect_firefox_history());
-
-        // Sort by visit time descending
+        // Sort by visit time descending and de-dupe exact url+time pairs.
         all_history.sort_by(|a, b| b.visit_time.cmp(&a.visit_time));
+        all_history.dedup_by(|a, b| a.url == b.url && a.visit_time == b.visit_time && a.browser == b.browser);
+        if all_history.len() > 2000 {
+            all_history.truncate(2000);
+        }
 
         all_history
     }
 
-    // YEH FUNCTION FILE LOCKING FIX KARTA HAI
+    /// Current-user env vars plus every Windows profile under C:\Users.
+    fn local_app_data_roots() -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Ok(path) = std::env::var("LOCALAPPDATA") {
+            let p = PathBuf::from(path);
+            if p.is_dir() {
+                roots.push(p);
+            }
+        }
+        for user_home in Self::windows_user_homes() {
+            let candidate = user_home.join(r"AppData\Local");
+            if candidate.is_dir() && !roots.iter().any(|r| r == &candidate) {
+                roots.push(candidate);
+            }
+        }
+        roots
+    }
+
+    fn roaming_app_data_roots() -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Ok(path) = std::env::var("APPDATA") {
+            let p = PathBuf::from(path);
+            if p.is_dir() {
+                roots.push(p);
+            }
+        }
+        for user_home in Self::windows_user_homes() {
+            let candidate = user_home.join(r"AppData\Roaming");
+            if candidate.is_dir() && !roots.iter().any(|r| r == &candidate) {
+                roots.push(candidate);
+            }
+        }
+        roots
+    }
+
+    fn windows_user_homes() -> Vec<PathBuf> {
+        let mut homes = Vec::new();
+        let users_dir = PathBuf::from(r"C:\Users");
+        if let Ok(entries) = fs::read_dir(&users_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if matches!(
+                    name.as_str(),
+                    "Public" | "Default" | "Default User" | "All Users" | "desktop.ini"
+                ) {
+                    continue;
+                }
+                let path = entry.path();
+                if path.is_dir() {
+                    homes.push(path);
+                }
+            }
+        }
+        homes
+    }
+
     fn open_unlocked_sqlite(db_path: &Path, prefix: &str) -> SqliteResult<Connection> {
-        // Temp file ka naam banayenge browser ke hisaab se
-        let temp_path = std::env::temp_dir().join(format!("zenvora_tmp_history_{}.sqlite", prefix));
-        
-        // Locked file ko temp folder mein copy karte hain
+        let temp_path = std::env::temp_dir().join(format!(
+            "zenvora_tmp_history_{}_{}.sqlite",
+            prefix,
+            std::process::id()
+        ));
+
         if fs::copy(db_path, &temp_path).is_ok() {
             Connection::open(&temp_path)
         } else {
-            // Agar copy fail ho jaye, toh direct open karne ki koshish (Fallback)
             Connection::open(db_path)
         }
     }
 
-    fn collect_chrome_history() -> Vec<BrowserHistory> {
-        let mut history = Vec::new();
-
-        // Safe path detection Windows LOCALAPPDATA ke zariye
-        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            let chrome_path = PathBuf::from(local_app_data)
-                .join(r"Google\Chrome\User Data\Default\History");
-            
-            if chrome_path.exists() {
-                if let Ok(entries) = Self::read_chromium_history(&chrome_path, "Chrome") {
-                    history.extend(entries);
-                }
-            }
+    fn chromium_profile_history_paths(user_data: &Path) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let default = user_data.join(r"Default\History");
+        if default.exists() {
+            paths.push(default);
         }
-
-        history
-    }
-
-    fn collect_edge_history() -> Vec<BrowserHistory> {
-        let mut history = Vec::new();
-
-        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            let edge_path = PathBuf::from(local_app_data)
-                .join(r"Microsoft\Edge\User Data\Default\History");
-            
-            if edge_path.exists() {
-                if let Ok(entries) = Self::read_chromium_history(&edge_path, "Edge") {
-                    history.extend(entries);
-                }
-            }
-        }
-
-        history
-    }
-
-    fn collect_firefox_history() -> Vec<BrowserHistory> {
-        let mut history = Vec::new();
-
-        if let Ok(app_data) = std::env::var("APPDATA") {
-            let firefox_path = PathBuf::from(app_data)
-                .join(r"Mozilla\Firefox\Profiles");
-            
-            if firefox_path.exists() {
-                if let Ok(entries) = fs::read_dir(firefox_path) {
-                    for entry in entries.flatten() {
-                        let profile_path = entry.path().join("places.sqlite");
-                        if profile_path.exists() {
-                            if let Ok(entries) = Self::read_firefox_history(&profile_path) {
-                                history.extend(entries);
-                            }
-                        }
+        if let Ok(entries) = fs::read_dir(user_data) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("Profile ") {
+                    let history = entry.path().join("History");
+                    if history.exists() {
+                        paths.push(history);
                     }
                 }
             }
         }
+        paths
+    }
 
+    fn collect_chrome_history_from(local_app_data: &Path) -> Vec<BrowserHistory> {
+        let mut history = Vec::new();
+        let user_data = local_app_data.join(r"Google\Chrome\User Data");
+        for path in Self::chromium_profile_history_paths(&user_data) {
+            if let Ok(entries) = Self::read_chromium_history(&path, "Chrome") {
+                history.extend(entries);
+            }
+        }
         history
     }
 
-    // Chrome aur Edge ka database structure same hota hai
+    fn collect_edge_history_from(local_app_data: &Path) -> Vec<BrowserHistory> {
+        let mut history = Vec::new();
+        let user_data = local_app_data.join(r"Microsoft\Edge\User Data");
+        for path in Self::chromium_profile_history_paths(&user_data) {
+            if let Ok(entries) = Self::read_chromium_history(&path, "Edge") {
+                history.extend(entries);
+            }
+        }
+        history
+    }
+
+    fn collect_firefox_history_from(app_data: &Path) -> Vec<BrowserHistory> {
+        let mut history = Vec::new();
+        let firefox_path = app_data.join(r"Mozilla\Firefox\Profiles");
+        if !firefox_path.exists() {
+            return history;
+        }
+        if let Ok(entries) = fs::read_dir(firefox_path) {
+            for entry in entries.flatten() {
+                let profile_path = entry.path().join("places.sqlite");
+                if profile_path.exists() {
+                    if let Ok(entries) = Self::read_firefox_history(&profile_path) {
+                        history.extend(entries);
+                    }
+                }
+            }
+        }
+        history
+    }
+
     fn read_chromium_history(db_path: &Path, browser_name: &str) -> SqliteResult<Vec<BrowserHistory>> {
         let conn = Self::open_unlocked_sqlite(db_path, browser_name)?;
         let mut stmt = conn.prepare(
@@ -123,7 +184,6 @@ impl BrowserHistoryCollector {
                 let visit_count: i32 = row.get(3)?;
 
                 let visit_time = if timestamp > 0 {
-                    // Chromium browsers ka time 1601 se start hota hai, 11644473600 minus karna zaruri hai
                     let secs = (timestamp / 1_000_000) - 11_644_473_600;
                     DateTime::from_timestamp(secs, 0)
                         .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
@@ -159,7 +219,6 @@ impl BrowserHistoryCollector {
                 let timestamp: i64 = row.get(2)?;
 
                 let visit_time = if timestamp > 0 {
-                    // Firefox seedha 1970 se start hota hai
                     let secs = timestamp / 1_000_000;
                     DateTime::from_timestamp(secs, 0)
                         .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
