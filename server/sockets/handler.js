@@ -25,7 +25,7 @@ const {
     handleHistoryAgentResponse,
     extractDeviceIdFromAgentSocket
 } = require('./historyHandler');
-const { userOwnsDevice } = require('../services/authService');
+const { userOwnsDevice, verifyAgentToken } = require('../services/authService');
 
 const CAMERA_ACTION_TOKENS = [
     'SWITCH_CAMERA',
@@ -313,14 +313,79 @@ async function handleSocketMessage(ws, message) {
 
         if (packet.type === 'register_channel') {
             const role = String(packet.role || 'AGENT').toUpperCase();
+            const deviceOrPanelId = String(packet.id || '').trim();
+
+            if (role === 'AGENT' || role === 'DEVICE') {
+                if (!deviceOrPanelId) {
+                    ws.send(JSON.stringify({
+                        type: 'sys_ack',
+                        status: 'auth_failed',
+                        message: 'device id required'
+                    }));
+                    ws.close();
+                    return;
+                }
+
+                if (ws.authContext?.kind !== 'agent' || String(ws.authContext.deviceId) !== deviceOrPanelId) {
+                    const token = packet.authToken || packet.agentToken || '';
+                    let credential = null;
+                    try {
+                        credential = await Promise.race([
+                            verifyAgentToken(deviceOrPanelId, token),
+                            new Promise((_, reject) =>
+                                setTimeout(() => reject(new Error('auth timeout')), 8000)
+                            )
+                        ]);
+                    } catch (_) {
+                        credential = null;
+                    }
+
+                    if (!credential) {
+                        ws.send(JSON.stringify({
+                            type: 'sys_ack',
+                            status: 'auth_failed',
+                            message: 'invalid agent credentials'
+                        }));
+                        ws.close();
+                        return;
+                    }
+
+                    ws.authContext = {
+                        kind: 'agent',
+                        deviceId: deviceOrPanelId,
+                        userId: credential.userId
+                    };
+                }
+
+                if (ws.registrationTimer) {
+                    clearTimeout(ws.registrationTimer);
+                    ws.registrationTimer = null;
+                }
+            } else if (role === 'DASHBOARD') {
+                if (ws.authContext?.kind !== 'user') {
+                    ws.send(JSON.stringify({
+                        type: 'sys_ack',
+                        status: 'auth_failed',
+                        message: 'dashboard authentication required'
+                    }));
+                    ws.close();
+                    return;
+                }
+            }
+
             const connectionKey = role === 'DASHBOARD'
-                ? `DASHBOARD_${packet.id || 'web-ui'}`
-                : `${role}_${packet.id}`;
+                ? `DASHBOARD_${deviceOrPanelId || 'web-ui'}`
+                : `${role}_${deviceOrPanelId}`;
 
             activeConnections.set(connectionKey, ws);
             ws.connectionKey = connectionKey;
 
-            const userId = ws.authContext?.kind === 'user' ? ws.authContext.user?.id : null;
+            const userId = ws.authContext?.kind === 'user'
+                ? ws.authContext.user?.id
+                : ws.authContext?.kind === 'agent'
+                    ? ws.authContext.userId
+                    : null;
+
             console.log(`[GATEWAY] Stream connection assigned registry key: ${connectionKey}`);
             const devices = await getDeviceOptions(userId);
             ws.send(JSON.stringify({

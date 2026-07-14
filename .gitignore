@@ -18,8 +18,15 @@ yarn-error.log*
 
 # env files
 .env*
-zenvora_agent/*
+# Rust
+zenvora_agent/target/
+**/target/
 
+# Optional
+**/debug/
+**/release/
+*.exe
+*.pdb
 # vercel
 .vercel
 

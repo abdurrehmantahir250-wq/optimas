@@ -1,0 +1,75 @@
+[package]
+name = "zenvora_agent"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "win_32"
+path = "src/main.rs"
+
+[build-dependencies]
+winres = "0.1"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = "0.3"
+url = "2.5"
+hostname = "0.4"
+sysinfo = "0.37"
+whoami = "1.5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+# 📸 Real Hardware & View Requirements
+nokhwa = { version = "0.10", features = ["input-native"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+xcap = "0.0.14"
+base64 = "0.21"
+walkdir = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+cpal = "0.15"
+windows = { version = "0.58", features = [
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Power",
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_WindowsProgramming",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_ColorSystem",
+    "Win32_Devices_Display",
+    "Win32_Foundation",
+    "UI_Notifications",
+    "UI_Notifications_Management",
+    "Foundation",
+    "Foundation_Collections",
+    "ApplicationModel",
+    "ApplicationModel_Core"
+] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+winreg = "0.52"
+windows-service = "0.7"
+[features]
+default = []
+# Build with: cargo build --features console
+# Keeps a visible console for debugging.
+console = []
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

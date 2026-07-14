@@ -1,0 +1,73 @@
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn escape_ps(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+#[cfg(windows)]
+fn run_message_box(title: &str, message: &str, icon: &str, blocking: bool) {
+    let script = format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         [System.Windows.Forms.MessageBox]::Show('{}','{}','OK','{}') | Out-Null",
+        escape_ps(message),
+        escape_ps(title),
+        icon
+    );
+
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.creation_flags(CREATE_NO_WINDOW).args([
+        "-NoProfile",
+        "-STA",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        &script,
+    ]);
+
+    if blocking {
+        let _ = cmd.output();
+    } else {
+        let _ = cmd.spawn();
+    }
+}
+
+#[cfg(not(windows))]
+fn run_message_box(title: &str, message: &str, _icon: &str, _blocking: bool) {
+    println!("[{}] {}", title, message);
+}
+
+/// Startup / install messages — wait until user clicks OK.
+pub fn show_blocking_info(title: &str, message: &str) {
+    println!("--> [{}] {}", title, message);
+    run_message_box(title, message, "Information", true);
+}
+
+pub fn show_blocking_error(title: &str, message: &str) {
+    eprintln!("--> [{}] {}", title, message);
+    run_message_box(title, message, "Error", true);
+}
+
+pub fn show_blocking_warning(title: &str, message: &str) {
+    eprintln!("--> [{}] {}", title, message);
+    run_message_box(title, message, "Warning", true);
+}
+
+/// Background agent — never block the socket loop.
+pub fn show_info(title: &str, message: &str) {
+    println!("--> [{}] {}", title, message);
+    run_message_box(title, message, "Information", false);
+}
+
+pub fn show_error(title: &str, message: &str) {
+    eprintln!("--> [{}] {}", title, message);
+    run_message_box(title, message, "Error", false);
+}
+
+pub fn show_warning(title: &str, message: &str) {
+    eprintln!("--> [{}] {}", title, message);
+    run_message_box(title, message, "Warning", false);
+}

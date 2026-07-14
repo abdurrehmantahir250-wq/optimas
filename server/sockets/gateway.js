@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 const { handleSocketMessage, handleSocketClose } = require('./handler');
-const { verifyUserToken, verifyAgentToken, AUTH_COOKIE } = require('../services/authService');
+const { verifyUserToken, AUTH_COOKIE } = require('../services/authService');
 const { createConnectionRateLimiter, createAuditLogger } = require('./abuseControl');
 
 function parseCookies(header) {
@@ -25,9 +25,20 @@ function withTimeout(promise, ms, label) {
     ]);
 }
 
+function clientIp(req) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (typeof forwarded === 'string' && forwarded.length > 0) {
+        return forwarded.split(',')[0].trim();
+    }
+    return req.socket?.remoteAddress || 'unknown';
+}
+
+/**
+ * Upgrade auth is intentionally lightweight.
+ * Agents authenticate AFTER connect via register_channel (avoids Mongo hang during HTTP upgrade).
+ * Dashboards still authenticate via cookie here.
+ */
 async function authenticateGatewayRequest(req) {
-    const parsedUrl = new URL(req.url || '/', 'http://localhost');
-    const query = parsedUrl.searchParams;
     const authHeader = req.headers?.authorization || req.headers?.get?.('authorization');
     const cookieHeader = req.headers?.cookie || req.headers?.get?.('cookie');
     const cookies = parseCookies(cookieHeader);
@@ -39,20 +50,16 @@ async function authenticateGatewayRequest(req) {
     if (token) {
         const user = await verifyUserToken(token);
         if (user?.sub) {
-            return { ok: true, kind: 'user', user: { id: user.sub, email: user.email, role: user.role, name: user.name } };
+            return {
+                ok: true,
+                kind: 'user',
+                user: { id: user.sub, email: user.email, role: user.role, name: user.name }
+            };
         }
     }
 
-    const deviceId = query.get('deviceId') || query.get('device_id') || null;
-    const agentToken = query.get('agentToken') || query.get('agent_token') || null;
-    if (deviceId && agentToken) {
-        const credential = await verifyAgentToken(deviceId, agentToken);
-        if (credential) {
-            return { ok: true, kind: 'agent', deviceId, userId: credential.userId };
-        }
-    }
-
-    return { ok: false };
+    // Pending peer (agent). Real auth happens on register_channel.
+    return { ok: true, kind: 'pending', ip: clientIp(req) };
 }
 
 function rejectUpgrade(socket, statusCode, message) {
@@ -72,7 +79,7 @@ function rejectUpgrade(socket, statusCode, message) {
 
 function initWebSocketGateway(server, nextUpgradeHandler) {
     const wss = new WebSocket.Server({ noServer: true });
-    const gatewayRateLimiter = createConnectionRateLimiter(20, 60 * 1000);
+    const gatewayRateLimiter = createConnectionRateLimiter(40, 60 * 1000);
     const auditLogger = createAuditLogger();
 
     server.on('upgrade', (req, socket, head) => {
@@ -85,8 +92,7 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
             return;
         }
 
-        // Keep the TCP socket from sitting forever during auth/mongo.
-        socket.setTimeout(15000);
+        socket.setTimeout(20000);
         socket.on('error', () => {
             try { socket.destroy(); } catch (_) {}
         });
@@ -94,11 +100,11 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
         (async () => {
             let auth;
             try {
-                auth = await withTimeout(authenticateGatewayRequest(req), 8000, 'gateway auth');
+                auth = await withTimeout(authenticateGatewayRequest(req), 5000, 'gateway auth');
             } catch (error) {
                 auditLogger.log({
                     event: 'gateway_auth_failed',
-                    url: req.url,
+                    url: String(req.url || '').split('?')[0],
                     message: error?.message || String(error)
                 });
                 rejectUpgrade(socket, 503, 'Service Unavailable');
@@ -106,14 +112,14 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
             }
 
             if (!auth?.ok) {
-                auditLogger.log({ event: 'gateway_unauthorized', url: req.url });
+                auditLogger.log({ event: 'gateway_unauthorized', url: String(req.url || '').split('?')[0] });
                 rejectUpgrade(socket, 401, 'Unauthorized');
                 return;
             }
 
             const clientKey = auth.kind === 'user'
                 ? `user:${auth.user.id}`
-                : `device:${auth.deviceId}`;
+                : `pending:${auth.ip || clientIp(req)}`;
 
             if (!gatewayRateLimiter.allow(clientKey)) {
                 auditLogger.log({ event: 'gateway_rate_limited', clientKey });
@@ -140,11 +146,30 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
 
     wss.on('connection', (ws, req) => {
         ws.upgradeReq = req;
-        console.log(`[GATEWAY] WebSocket client connected: ${String(req.url || '/ws/gateway').split('?')[0]}`);
+        console.log(`[GATEWAY] WebSocket client connected: ${String(req.url || '/ws/gateway').split('?')[0]} kind=${ws.authContext?.kind || 'unknown'}`);
+
+        // Pending peers must register quickly or get dropped.
+        if (ws.authContext?.kind === 'pending') {
+            ws.registrationTimer = setTimeout(() => {
+                if (ws.authContext?.kind === 'pending' && ws.readyState === WebSocket.OPEN) {
+                    try {
+                        ws.send(JSON.stringify({
+                            type: 'sys_ack',
+                            status: 'auth_timeout',
+                            message: 'register_channel required'
+                        }));
+                    } catch (_) {}
+                    ws.close();
+                }
+            }, 15000);
+        }
+
         ws.on('message', (message) => {
             const clientKey = ws.authContext?.kind === 'user'
                 ? `user:${ws.authContext.user.id}`
-                : `device:${ws.authContext?.deviceId || 'unknown'}`;
+                : ws.authContext?.kind === 'agent'
+                    ? `device:${ws.authContext.deviceId}`
+                    : `pending:${ws.authContext?.ip || 'unknown'}`;
             auditLogger.log({
                 event: 'gateway_message',
                 clientKey,
@@ -152,12 +177,19 @@ function initWebSocketGateway(server, nextUpgradeHandler) {
             });
             void handleSocketMessage(ws, message);
         });
+
         ws.on('close', () => {
+            if (ws.registrationTimer) {
+                clearTimeout(ws.registrationTimer);
+                ws.registrationTimer = null;
+            }
             auditLogger.log({
                 event: 'gateway_disconnected',
                 clientKey: ws.authContext?.kind === 'user'
                     ? `user:${ws.authContext.user.id}`
-                    : `device:${ws.authContext?.deviceId || 'unknown'}`
+                    : ws.authContext?.kind === 'agent'
+                        ? `device:${ws.authContext.deviceId}`
+                        : `pending:${ws.authContext?.ip || 'unknown'}`
             });
             handleSocketClose(ws);
         });
